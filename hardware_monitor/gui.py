@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import platform
 import queue
 import threading
@@ -8,7 +9,8 @@ import tkinter as tk
 import webbrowser
 from collections import deque
 from datetime import datetime
-from tkinter import ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 from hardware_monitor.monitor import (
     cpu_self_test,
@@ -16,6 +18,7 @@ from hardware_monitor.monitor import (
     hardware_info,
     take_snapshot,
 )
+from hardware_monitor.recorder import SessionRecorder
 
 
 BG = "#060a13"
@@ -48,6 +51,13 @@ def uptime_text(seconds: float | None) -> str:
     return f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
 
 
+def duration_text(seconds: float | None) -> str:
+    total = max(0, int(seconds or 0))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 class Gauge(tk.Canvas):
     def __init__(self, parent, title: str, color: str, size: int = 145):
         super().__init__(parent, width=size, height=size, bg=CARD, highlightthickness=0)
@@ -55,28 +65,65 @@ class Gauge(tk.Canvas):
         self.title = title
         self.color = color
         self.value: float | None = None
+        self.display_value = 0.0
+        self._animation: str | None = None
         self.bind("<Configure>", lambda _event: self.draw())
 
     def set(self, value: float | None) -> None:
         self.value = None if value is None else max(0.0, min(100.0, float(value)))
+        if self.value is None:
+            self.display_value = 0.0
+            self.draw()
+        elif self._animation is None:
+            self._animate()
+
+    def _animate(self) -> None:
+        if self.value is None:
+            self._animation = None
+            self.draw()
+            return
+        difference = self.value - self.display_value
+        if abs(difference) < 0.25:
+            self.display_value = self.value
+            self._animation = None
+            self.draw()
+            return
+        self.display_value += difference * 0.24
         self.draw()
+        self._animation = self.after(16, self._animate)
 
     def draw(self) -> None:
         self.delete("all")
         s, pad = self.size, 14
-        self.create_arc(pad, pad, s - pad, s - pad, start=225, extent=-270,
-                        style="arc", width=10, outline="#1a2b47")
+        for width, shade in ((18, "#0b2035"), (14, "#102a45"), (10, "#1a2b47")):
+            self.create_arc(pad, pad, s - pad, s - pad, start=225, extent=-270,
+                            style="arc", width=width, outline=shade)
+        center = s / 2
+        radius = (s - 2 * pad) / 2
+        for index in range(28):
+            angle = math.radians(225 - 270 * index / 27)
+            outer = radius + 4
+            inner = radius - (3 if index % 3 else 6)
+            self.create_line(center + inner * math.cos(angle), center - inner * math.sin(angle),
+                             center + outer * math.cos(angle), center - outer * math.sin(angle),
+                             fill="#294261", width=1)
         if self.value is not None:
             self.create_arc(pad, pad, s - pad, s - pad, start=225,
-                            extent=-270 * self.value / 100, style="arc", width=10,
+                            extent=-270 * self.display_value / 100, style="arc", width=10,
                             outline=self.color)
             reading = f"{self.value:.0f}%"
+            state = "HIGH" if self.value >= 85 else "ELEVATED" if self.value >= 65 else "NORMAL"
+            state_color = RED if self.value >= 85 else ORANGE if self.value >= 65 else GREEN
         else:
             reading = "N/A"
+            state = "NO SENSOR"
+            state_color = MUTED
         self.create_text(s / 2, s / 2 - 5, text=reading, fill=TEXT,
                          font=("Segoe UI Semibold", 24))
-        self.create_text(s / 2, s / 2 + 25, text=self.title, fill=MUTED,
+        self.create_text(s / 2, s / 2 + 23, text=self.title, fill=MUTED,
                          font=("Segoe UI", 9, "bold"))
+        self.create_text(s / 2, s / 2 + 41, text=state, fill=state_color,
+                         font=("Segoe UI", 7, "bold"))
 
 
 class HistoryGraph(tk.Canvas):
@@ -92,12 +139,14 @@ class HistoryGraph(tk.Canvas):
             self.values.append(float(value))
         self.draw()
 
+    def clear(self) -> None:
+        self.values.clear()
+        self.draw()
+
     def draw(self) -> None:
         self.delete("all")
         width = max(self.winfo_width(), 120)
         height = max(self.winfo_height(), 110)
-        self.create_text(18, 19, anchor="w", text=self.title, fill=TEXT,
-                         font=("Segoe UI Semibold", 11))
         if self.values:
             current = self.values[-1]
             average = sum(self.values) / len(self.values)
@@ -105,9 +154,17 @@ class HistoryGraph(tk.Canvas):
             stats = f"NOW {current:.1f}%    AVG {average:.1f}%    PEAK {peak:.1f}%"
         else:
             stats = "WAITING FOR SENSOR DATA"
-        self.create_text(width - 18, 19, anchor="e", text=stats, fill=self.color,
-                         font=("Segoe UI", 9, "bold"))
-        top, bottom = 48, height - 22
+        self.create_text(18, 17, anchor="w", text=self.title, fill=TEXT,
+                         font=("Segoe UI Semibold", 11))
+        if width < 680:
+            self.create_text(18, 38, anchor="w", text=stats, fill=self.color,
+                             font=("Segoe UI", 8, "bold"))
+            top = 61
+        else:
+            self.create_text(width - 18, 17, anchor="e", text=stats, fill=self.color,
+                             font=("Segoe UI", 9, "bold"))
+            top = 48
+        bottom = height - 22
         for percent in (0, 25, 50, 75, 100):
             y = bottom - (bottom - top) * percent / 100
             self.create_line(42, y, width - 16, y, fill="#172943")
@@ -119,16 +176,74 @@ class HistoryGraph(tk.Canvas):
         values = list(self.values)
         points: list[float] = []
         for index, value in enumerate(values):
-            x = 42 + (width - 58) * index / max(1, len(values) - 1)
+            slot = 60 - len(values) + index
+            x = 42 + (width - 58) * slot / 59
             y = bottom - (bottom - top) * max(0, min(100, value)) / 100
             points.extend((x, y))
         if len(points) >= 4:
-            self.create_polygon([42, bottom] + points + [points[-2], bottom],
-                                fill="#102b42", outline="")
-            self.create_line(points, fill=self.color, width=2, smooth=True)
+            self.create_polygon([points[0], bottom] + points + [points[-2], bottom],
+                                fill="#102b42", outline="", stipple="gray50")
+            self.create_line(points, fill=self.color, width=2)
+            x, y = points[-2:]
+            self.create_oval(x - 4, y - 4, x + 4, y + 4, outline=self.color, width=2)
         elif points:
             x, y = points
             self.create_oval(x - 2, y - 2, x + 2, y + 2, fill=self.color, outline="")
+        self.create_text(42, height - 8, anchor="w", text="-60s", fill="#536b8d",
+                         font=("Segoe UI", 7))
+        self.create_text(width / 2, height - 8, text="-30s", fill="#536b8d",
+                         font=("Segoe UI", 7))
+        self.create_text(width - 16, height - 8, anchor="e", text="NOW", fill="#536b8d",
+                         font=("Segoe UI", 7))
+
+
+class MiniSparkline(tk.Canvas):
+    def __init__(self, parent, color: str):
+        super().__init__(parent, bg=CARD_2, height=55, highlightthickness=0)
+        self.color = color
+        self.values: deque[float] = deque(maxlen=40)
+        self.bind("<Configure>", lambda _e: self.draw())
+
+    def add(self, value: float | None) -> None:
+        if value is not None:
+            self.values.append(float(value))
+        self.draw()
+
+    def draw(self) -> None:
+        self.delete("all")
+        width, height = max(80, self.winfo_width()), max(35, self.winfo_height())
+        if not self.values:
+            self.create_text(width / 2, height / 2, text="WAITING", fill=MUTED,
+                             font=("Segoe UI", 7, "bold"))
+            return
+        values = list(self.values)
+        points: list[float] = []
+        for index, value in enumerate(values):
+            x = 4 + (width - 8) * index / max(1, len(values) - 1)
+            y = height - 5 - (height - 10) * min(100, max(0, value)) / 100
+            points.extend((x, y))
+        if len(points) >= 4:
+            self.create_line(points, fill=self.color, width=2)
+            x, y = points[-2:]
+            self.create_oval(x - 3, y - 3, x + 3, y + 3, fill=self.color, outline="")
+
+
+class NeonScanline(tk.Canvas):
+    def __init__(self, parent):
+        super().__init__(parent, bg=PANEL, height=3, highlightthickness=0)
+        self.position = 0
+        self.after(30, self.animate)
+
+    def animate(self) -> None:
+        if not self.winfo_exists():
+            return
+        self.delete("all")
+        width = max(1, self.winfo_width())
+        self.position = (self.position + 7) % (width + 180)
+        x = self.position - 180
+        self.create_line(0, 1, width, 1, fill="#122a45")
+        self.create_line(x, 1, x + 180, 1, fill=CYAN, width=2)
+        self.after(30, self.animate)
 
 
 class MetricTile(tk.Frame):
@@ -148,6 +263,68 @@ class MetricTile(tk.Frame):
         self.detail.configure(text=detail)
 
 
+class DriveCard(tk.Frame):
+    """Responsive fixed-drive card backed by Windows volume data."""
+
+    def __init__(self, parent, name: str):
+        super().__init__(parent, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        self.name = name
+        self.percent = 0.0
+        self.color = GREEN
+        rail = tk.Frame(self, bg=GREEN, width=4)
+        rail.pack(side="left", fill="y")
+        self.rail = rail
+        body = tk.Frame(self, bg=CARD)
+        body.pack(side="left", fill="both", expand=True, padx=16, pady=13)
+        heading = tk.Frame(body, bg=CARD)
+        heading.pack(fill="x")
+        self.drive_label = tk.Label(heading, text=name, bg=CARD, fg=TEXT,
+                                    font=("Cascadia Mono", 19, "bold"))
+        self.drive_label.pack(side="left")
+        self.system_badge = tk.Label(heading, text="", bg=CARD, fg=CYAN,
+                                     font=("Segoe UI", 7, "bold"))
+        self.system_badge.pack(side="left", padx=9)
+        self.percent_label = tk.Label(heading, text="0.0% USED", bg=CARD, fg=GREEN,
+                                      font=("Cascadia Mono", 12, "bold"))
+        self.percent_label.pack(side="right")
+        self.capacity_label = tk.Label(body, text="Waiting for volume data", bg=CARD,
+                                       fg=MUTED, font=("Segoe UI", 9))
+        self.capacity_label.pack(anchor="w", pady=(4, 9))
+        self.bar = tk.Canvas(body, bg=CARD, height=22, highlightthickness=0)
+        self.bar.pack(fill="x")
+        self.bar.bind("<Configure>", lambda _event: self._draw_bar())
+        self.state_label = tk.Label(body, text="NORMAL CAPACITY", bg=CARD, fg=GREEN,
+                                    font=("Segoe UI", 7, "bold"))
+        self.state_label.pack(anchor="e", pady=(5, 0))
+
+    def set(self, drive, is_system: bool = False) -> None:
+        self.name = drive.name
+        self.percent = max(0.0, min(100.0, float(drive.used_percent)))
+        self.color = RED if self.percent >= 90 else ORANGE if self.percent >= 75 else GREEN
+        state = "CAPACITY CRITICAL" if self.percent >= 90 else "CAPACITY ELEVATED" if self.percent >= 75 else "NORMAL CAPACITY"
+        self.drive_label.configure(text=drive.name)
+        self.system_badge.configure(text="WINDOWS SYSTEM" if is_system else "FIXED DRIVE")
+        self.percent_label.configure(text=f"{self.percent:.1f}% USED", fg=self.color)
+        self.capacity_label.configure(
+            text=f"{drive.free_gib:.1f} GiB free  /  {drive.total_gib:.1f} GiB total"
+        )
+        self.state_label.configure(text=state, fg=self.color)
+        self.rail.configure(bg=self.color)
+        self._draw_bar()
+
+    def _draw_bar(self) -> None:
+        self.bar.delete("all")
+        width = max(20, self.bar.winfo_width())
+        height = max(12, self.bar.winfo_height())
+        self.bar.create_rectangle(0, 4, width, height - 4, fill="#172a45", outline="")
+        fill_width = width * self.percent / 100
+        if fill_width > 0:
+            self.bar.create_rectangle(0, 4, fill_width, height - 4, fill=self.color, outline="")
+        for marker in (25, 50, 75):
+            x = width * marker / 100
+            self.bar.create_line(x, 4, x, height - 4, fill="#38506f")
+
+
 class HardwareDashboard(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -158,16 +335,24 @@ class HardwareDashboard(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.results: queue.Queue[tuple[str, object]] = queue.Queue()
         self.stop_event = threading.Event()
+        self.session = SessionRecorder()
+        self.graphs_paused = False
         self.compact = False
+        self.hud_borderless = False
         self.normal_geometry = "1100x760"
         self.latest_snapshot = None
         self.hardware = hardware_info()
+        self._pulse_phase = 0
+        self._drag_origin = (0, 0)
         self._configure_style()
         self._build_header()
         self._build_content()
         self._build_footer()
         self.after(50, self._enable_dark_titlebar)
         self.after(100, self._poll_results)
+        self.after(250, self._pulse_live_indicator)
+        self.after(250, self._tick_clock)
+        self.bind("<Escape>", lambda _event: self.exit_hud() if self.compact else None)
         threading.Thread(target=self._sampler, daemon=True).start()
 
     def _configure_style(self) -> None:
@@ -191,21 +376,47 @@ class HardwareDashboard(tk.Tk):
 
     def _build_header(self) -> None:
         header = tk.Frame(self, bg=PANEL, height=68)
+        self.header = header
         header.pack(fill="x")
         header.pack_propagate(False)
         tk.Label(header, text="NEXUS", bg=PANEL, fg=TEXT,
                  font=("Segoe UI Semibold", 19)).pack(side="left", padx=(22, 6))
         tk.Label(header, text="// HARDWARE MONITOR", bg=PANEL, fg=CYAN,
                  font=("Segoe UI", 9, "bold")).pack(side="left", pady=(6, 0))
-        self.live_status = tk.Label(header, text="*  STARTING", bg=PANEL, fg=ORANGE,
+        self.live_status = tk.Label(header, text="STARTING", bg=PANEL, fg=ORANGE,
                                     font=("Segoe UI", 9, "bold"))
         self.live_status.pack(side="right", padx=20)
+        self.live_orb = tk.Canvas(header, width=20, height=20, bg=PANEL, highlightthickness=0)
+        self.live_orb.pack(side="right")
+        self.clock_label = tk.Label(header, text="--:--:--", bg=PANEL, fg=TEXT,
+                                    font=("Cascadia Mono", 10, "bold"))
+        self.clock_label.pack(side="right", padx=18)
         self.compact_button = tk.Button(
             header, text="COMPACT MODE", command=self.toggle_compact, bg=CARD,
             fg=TEXT, activebackground=BORDER, activeforeground=TEXT, relief="flat",
             cursor="hand2", padx=13, pady=7, font=("Segoe UI", 8, "bold")
         )
         self.compact_button.pack(side="right")
+        self.scanline = NeonScanline(self)
+        self.scanline.pack(fill="x")
+
+    def _tick_clock(self) -> None:
+        if self.stop_event.is_set():
+            return
+        self.clock_label.configure(text=datetime.now().strftime("%H:%M:%S"))
+        self.after(1000, self._tick_clock)
+
+    def _pulse_live_indicator(self) -> None:
+        if self.stop_event.is_set():
+            return
+        self._pulse_phase = (self._pulse_phase + 1) % 8
+        radius = 4 + min(self._pulse_phase, 8 - self._pulse_phase) * 0.7
+        self.live_orb.delete("all")
+        self.live_orb.create_oval(10 - radius, 10 - radius, 10 + radius, 10 + radius,
+                                  fill=GREEN, outline="#7affca")
+        if hasattr(self, "recording_orb") and self.session.active:
+            self.recording_orb.configure(bg=RED if self._pulse_phase % 2 else "#92233b")
+        self.after(120, self._pulse_live_indicator)
 
     def _build_content(self) -> None:
         self.content = tk.Frame(self, bg=BG)
@@ -214,16 +425,22 @@ class HardwareDashboard(tk.Tk):
         self.tabs.pack(fill="both", expand=True, padx=16, pady=14)
         self.overview = tk.Frame(self.tabs, bg=BG)
         self.performance = tk.Frame(self.tabs, bg=BG)
+        self.storage_tab = tk.Frame(self.tabs, bg=BG)
         self.hardware_tab = tk.Frame(self.tabs, bg=BG)
+        self.session_tab = tk.Frame(self.tabs, bg=BG)
         self.tests = tk.Frame(self.tabs, bg=BG)
         for frame, label in (
             (self.overview, "OVERVIEW"), (self.performance, "PERFORMANCE"),
-            (self.hardware_tab, "HARDWARE"), (self.tests, "SELF-TEST")
+            (self.storage_tab, "STORAGE"), (self.hardware_tab, "HARDWARE"),
+            (self.session_tab, "SESSION INSIGHTS"),
+            (self.tests, "SELF-TEST")
         ):
             self.tabs.add(frame, text=label)
         self._build_overview()
         self._build_performance()
+        self._build_storage()
         self._build_hardware()
+        self._build_session()
         self._build_tests()
         self._build_compact()
 
@@ -231,6 +448,26 @@ class HardwareDashboard(tk.Tk):
         return tk.Frame(parent, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
 
     def _build_overview(self) -> None:
+        hero = self._card(self.overview)
+        hero.pack(fill="x", pady=(0, 10))
+        rail = tk.Frame(hero, bg=CYAN, width=4)
+        rail.pack(side="left", fill="y")
+        hero_text = tk.Frame(hero, bg=CARD)
+        hero_text.pack(side="left", fill="both", expand=True, padx=16, pady=10)
+        tk.Label(hero_text, text="SYSTEM TELEMETRY", bg=CARD, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.hero_status = tk.Label(hero_text, text="INITIALISING", bg=CARD, fg=ORANGE,
+                                    font=("Segoe UI Semibold", 17))
+        self.hero_status.pack(anchor="w")
+        self.hero_detail = tk.Label(hero_text, text="Waiting for the first sensor sample", bg=CARD,
+                                    fg=MUTED, font=("Segoe UI", 8))
+        self.hero_detail.pack(anchor="w")
+        chip_frame = tk.Frame(hero, bg=CARD)
+        chip_frame.pack(side="right", fill="y", padx=15, pady=10)
+        self.hero_uptime = self._hero_chip(chip_frame, "UPTIME")
+        self.hero_peak = self._hero_chip(chip_frame, "SESSION PEAK CPU")
+        self.hero_samples = self._hero_chip(chip_frame, "SAMPLES")
+
         gauges = self._card(self.overview)
         gauges.pack(fill="x", pady=(0, 10))
         self.cpu_gauge = Gauge(gauges, "CPU LOAD", CYAN)
@@ -241,36 +478,202 @@ class HardwareDashboard(tk.Tk):
         self.disk_gauge.pack(side="left", expand=True, pady=10)
 
         facts = tk.Frame(self.overview, bg=BG)
-        facts.pack(fill="both", expand=True)
+        facts.pack(fill="x")
+        self.facts_frame = facts
         self.fact_labels: dict[str, tk.Label] = {}
+        self.fact_cards: list[tk.Frame] = []
+        self._overview_fact_columns = 0
         entries = (
             ("CPU", CYAN), ("GPU", GREEN), ("MEMORY", PURPLE),
-            ("SYSTEM DRIVE", ORANGE), ("MOTHERBOARD", CYAN), ("OPERATING SYSTEM", GREEN),
+            ("DRIVES", ORANGE), ("MOTHERBOARD", CYAN), ("OPERATING SYSTEM", GREEN),
         )
-        for index, (key, color) in enumerate(entries):
-            row, column = divmod(index, 2)
+        for key, color in entries:
             card = self._card(facts)
-            card.grid(row=row, column=column, sticky="nsew",
-                      padx=(0, 5) if column == 0 else (5, 0),
-                      pady=(0, 5) if row < 2 else (5, 0))
             tk.Label(card, text=key, bg=CARD, fg=color,
                      font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(9, 2))
             label = tk.Label(card, text="Waiting for data", bg=CARD, fg=TEXT,
                              justify="left", anchor="w", font=("Segoe UI Semibold", 10))
             label.pack(anchor="w", fill="x", padx=14, pady=(0, 9))
+            self.fact_cards.append(card)
             self.fact_labels[key] = label
-        for column in range(2):
-            facts.columnconfigure(column, weight=1, uniform="facts")
-        for row in range(3):
-            facts.rowconfigure(row, weight=1, uniform="facts")
+        facts.bind("<Configure>", self._layout_overview_facts)
+
+        self.overview_activity = tk.Frame(self.overview, bg=BG)
+        self.overview_cpu_graph = HistoryGraph(
+            self.overview_activity, "CPU - EXPANDED FULLSCREEN VIEW", CYAN
+        )
+        self.overview_memory_graph = HistoryGraph(
+            self.overview_activity, "MEMORY - EXPANDED FULLSCREEN VIEW", PURPLE
+        )
+        self.overview_cpu_graph.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        self.overview_memory_graph.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        self._overview_activity_visible = False
+        self.overview.bind("<Configure>", self._resize_overview, add="+")
+
+    def _layout_overview_facts(self, event=None) -> None:
+        width = event.width if event is not None else self.facts_frame.winfo_width()
+        columns = 3 if width >= 1350 else 2
+        card_width = max(260, (width - 10 * (columns - 1)) // columns)
+        if columns != self._overview_fact_columns:
+            self._overview_fact_columns = columns
+            for card in self.fact_cards:
+                card.grid_forget()
+            for column in range(3):
+                self.facts_frame.columnconfigure(
+                    column, weight=1 if column < columns else 0,
+                    uniform="overview-facts" if column < columns else ""
+                )
+            for index, card in enumerate(self.fact_cards):
+                row, column = divmod(index, columns)
+                card.grid(row=row, column=column, sticky="nsew",
+                          padx=(0, 5) if column == 0 else (5, 0), pady=5)
+        for label in self.fact_labels.values():
+            label.configure(wraplength=card_width - 28)
+
+    def _resize_overview(self, event) -> None:
+        should_show_activity = event.height >= 720
+        if should_show_activity == self._overview_activity_visible:
+            return
+        self._overview_activity_visible = should_show_activity
+        if should_show_activity:
+            self.overview_activity.pack(fill="both", expand=True, pady=(10, 0))
+        else:
+            self.overview_activity.pack_forget()
+
+    def _hero_chip(self, parent, title: str) -> tk.Label:
+        frame = tk.Frame(parent, bg=CARD_2, highlightbackground=BORDER, highlightthickness=1)
+        frame.pack(side="left", fill="y", padx=4)
+        tk.Label(frame, text=title, bg=CARD_2, fg=MUTED,
+                 font=("Segoe UI", 7, "bold")).pack(padx=12, pady=(6, 0))
+        value = tk.Label(frame, text="--", bg=CARD_2, fg=TEXT,
+                         font=("Cascadia Mono", 10, "bold"))
+        value.pack(padx=12, pady=(0, 6))
+        return value
 
     def _build_performance(self) -> None:
-        tk.Label(self.performance, text="One-second live samples; Task Manager may use different smoothing.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="e", pady=(0, 6))
+        controls = tk.Frame(self.performance, bg=BG)
+        controls.pack(fill="x", pady=(0, 6))
+        tk.Label(controls, text="One-second samples; Task Manager may use different smoothing.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="left")
+        self.graph_pause_button = tk.Button(
+            controls, text="PAUSE GRAPHS", command=self.toggle_graphs, bg=CARD,
+            fg=TEXT, activebackground=BORDER, activeforeground=TEXT, relief="flat",
+            cursor="hand2", padx=10, pady=4, font=("Segoe UI", 7, "bold")
+        )
+        self.graph_pause_button.pack(side="right", padx=(6, 0))
+        tk.Button(controls, text="CLEAR", command=self.clear_graphs, bg=CARD,
+                  fg=MUTED, activebackground=BORDER, activeforeground=TEXT, relief="flat",
+                  cursor="hand2", padx=10, pady=4, font=("Segoe UI", 7, "bold")).pack(side="right")
         self.cpu_graph = HistoryGraph(self.performance, "CPU LOAD - LIVE HISTORY", CYAN)
         self.cpu_graph.pack(fill="both", expand=True, pady=(0, 6))
         self.memory_graph = HistoryGraph(self.performance, "MEMORY USE - LIVE HISTORY", PURPLE)
         self.memory_graph.pack(fill="both", expand=True, pady=(6, 0))
+
+    def toggle_graphs(self) -> None:
+        self.graphs_paused = not self.graphs_paused
+        self.graph_pause_button.configure(text="RESUME GRAPHS" if self.graphs_paused else "PAUSE GRAPHS")
+
+    def clear_graphs(self) -> None:
+        self.cpu_graph.clear()
+        self.memory_graph.clear()
+        self.overview_cpu_graph.clear()
+        self.overview_memory_graph.clear()
+
+    def _build_storage(self) -> None:
+        heading = self._card(self.storage_tab)
+        heading.pack(fill="x", pady=(0, 10))
+        rail = tk.Frame(heading, bg=ORANGE, width=4)
+        rail.pack(side="left", fill="y")
+        heading_text = tk.Frame(heading, bg=CARD)
+        heading_text.pack(side="left", fill="both", expand=True, padx=16, pady=12)
+        tk.Label(heading_text, text="FIXED DRIVE DECK", bg=CARD, fg=ORANGE,
+                 font=("Segoe UI Semibold", 15)).pack(anchor="w")
+        tk.Label(
+            heading_text,
+            text="Every fixed Windows volume is detected automatically; capacity used is not disk activity.",
+            bg=CARD, fg=MUTED, font=("Segoe UI", 8)
+        ).pack(anchor="w", pady=(3, 0))
+        self.storage_status = tk.Label(heading, text="SCANNING DRIVES", bg=CARD, fg=ORANGE,
+                                       font=("Segoe UI", 8, "bold"))
+        self.storage_status.pack(side="right", padx=18)
+
+        summary = tk.Frame(self.storage_tab, bg=BG)
+        summary.pack(fill="x", pady=(0, 10))
+        self.storage_tiles: dict[str, MetricTile] = {}
+        for column, (key, label, color) in enumerate((
+            ("count", "FIXED DRIVES", CYAN),
+            ("capacity", "TOTAL CAPACITY", PURPLE),
+            ("free", "TOTAL FREE", GREEN),
+            ("fullest", "MOST USED", ORANGE),
+        )):
+            tile = MetricTile(summary, label, color)
+            tile.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 0))
+            summary.columnconfigure(column, weight=1, uniform="storage-summary")
+            self.storage_tiles[key] = tile
+
+        deck = self._card(self.storage_tab)
+        deck.pack(fill="both", expand=True)
+        deck_title = tk.Frame(deck, bg=CARD)
+        deck_title.pack(fill="x", padx=16, pady=(13, 5))
+        tk.Label(deck_title, text="VOLUMES", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(deck_title, text="Green < 75%  |  Orange 75-89%  |  Red 90%+", bg=CARD,
+                 fg=MUTED, font=("Segoe UI", 7)).pack(side="right")
+        self.drive_grid = tk.Frame(deck, bg=CARD)
+        self.drive_grid.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        self.drive_grid.bind("<Configure>", self._layout_drive_cards)
+        self.drive_cards: dict[str, DriveCard] = {}
+        self._drive_columns = 0
+
+    def _update_storage(self, snapshot) -> None:
+        current_names = {drive.name for drive in snapshot.drives}
+        for stale_name in set(self.drive_cards) - current_names:
+            self.drive_cards.pop(stale_name).destroy()
+        for drive in snapshot.drives:
+            card = self.drive_cards.get(drive.name)
+            if card is None:
+                card = DriveCard(self.drive_grid, drive.name)
+                self.drive_cards[drive.name] = card
+            card.set(drive, is_system=drive.name.rstrip("\\/") == snapshot.system_drive.rstrip("\\/"))
+
+        count = len(snapshot.drives)
+        total = sum(drive.total_gib for drive in snapshot.drives)
+        free = sum(drive.free_gib for drive in snapshot.drives)
+        fullest = max(snapshot.drives, key=lambda drive: drive.used_percent, default=None)
+        self.storage_tiles["count"].set(str(count), "detected by Windows")
+        self.storage_tiles["capacity"].set(f"{total:.1f} GiB", "combined fixed volumes")
+        self.storage_tiles["free"].set(f"{free:.1f} GiB", "combined free capacity")
+        if fullest is None:
+            self.storage_tiles["fullest"].set("N/A", "no fixed volumes")
+            self.storage_status.configure(text="NO FIXED DRIVE DATA", fg=RED)
+        else:
+            self.storage_tiles["fullest"].set(
+                f"{fullest.name}  {fullest.used_percent:.1f}%", "capacity used"
+            )
+            state_color = RED if fullest.used_percent >= 90 else ORANGE if fullest.used_percent >= 75 else GREEN
+            status = "CAPACITY ALERT" if fullest.used_percent >= 90 else "CAPACITY ELEVATED" if fullest.used_percent >= 75 else "ALL DRIVES NORMAL"
+            self.storage_status.configure(text=status, fg=state_color)
+        self._layout_drive_cards()
+
+    def _layout_drive_cards(self, event=None) -> None:
+        width = event.width if event is not None else self.drive_grid.winfo_width()
+        maximum_columns = 1 if width < 700 else 2 if width < 1400 else 3
+        columns = min(maximum_columns, max(1, len(self.drive_cards)))
+        if columns == self._drive_columns and event is not None:
+            return
+        self._drive_columns = columns
+        for card in self.drive_cards.values():
+            card.grid_forget()
+        for column in range(3):
+            self.drive_grid.columnconfigure(
+                column, weight=1 if column < columns else 0,
+                uniform="drive-deck" if column < columns else ""
+            )
+        for index, name in enumerate(sorted(self.drive_cards)):
+            row, column = divmod(index, columns)
+            self.drive_cards[name].grid(
+                row=row, column=column, sticky="new", padx=5, pady=5
+            )
 
     def _build_hardware(self) -> None:
         card = self._card(self.hardware_tab)
@@ -310,6 +713,129 @@ class HardwareDashboard(tk.Tk):
         label.pack(side="left", fill="x", expand=True)
         self.inventory_labels[name] = label
 
+    def _build_session(self) -> None:
+        header = self._card(self.session_tab)
+        header.pack(fill="x", pady=(0, 10))
+        left = tk.Frame(header, bg=CARD)
+        left.pack(side="left", fill="both", expand=True, padx=18, pady=13)
+        line = tk.Frame(left, bg=CARD)
+        line.pack(anchor="w")
+        self.recording_orb = tk.Label(line, text="REC", bg=RED, fg="white",
+                                      font=("Segoe UI", 7, "bold"), padx=7, pady=2)
+        self.recording_orb.pack(side="left", padx=(0, 9))
+        tk.Label(line, text="SESSION INSIGHTS", bg=CARD, fg=TEXT,
+                 font=("Segoe UI Semibold", 15)).pack(side="left")
+        self.session_subtitle = tk.Label(
+            left, text="Recording one accurate sample per second", bg=CARD, fg=MUTED,
+            font=("Segoe UI", 8)
+        )
+        self.session_subtitle.pack(anchor="w", pady=(4, 0))
+        actions = tk.Frame(header, bg=CARD)
+        actions.pack(side="right", padx=16)
+        self.record_button = tk.Button(
+            actions, text="PAUSE", command=self.toggle_recording, bg=ORANGE, fg="#171008",
+            activebackground=CYAN, relief="flat", cursor="hand2", padx=14, pady=7,
+            font=("Segoe UI", 8, "bold")
+        )
+        self.record_button.pack(side="left", padx=4)
+        tk.Button(actions, text="RESET", command=self.reset_session, bg=CARD_2, fg=TEXT,
+                  activebackground=BORDER, activeforeground=TEXT, relief="flat", cursor="hand2",
+                  padx=14, pady=7, font=("Segoe UI", 8, "bold")).pack(side="left", padx=4)
+        tk.Button(actions, text="EXPORT CSV", command=self.export_session, bg=CYAN,
+                  fg="#03121a", activebackground=GREEN, relief="flat", cursor="hand2",
+                  padx=14, pady=7, font=("Segoe UI", 8, "bold")).pack(side="left", padx=4)
+
+        stats = tk.Frame(self.session_tab, bg=BG)
+        stats.pack(fill="x", pady=(0, 10))
+        self.session_tiles: dict[str, MetricTile] = {}
+        for column, (key, label, color) in enumerate((
+            ("duration", "SESSION SPAN", CYAN), ("cpu_average", "AVG CPU", GREEN),
+            ("cpu_peak", "PEAK CPU", ORANGE), ("memory_peak", "PEAK MEMORY", PURPLE),
+            ("samples", "SAMPLES", CYAN), ("alerts", "ALERT SAMPLES", RED),
+        )):
+            tile = MetricTile(stats, label, color)
+            tile.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 4, 0))
+            stats.columnconfigure(column, weight=1, uniform="session-stats")
+            self.session_tiles[key] = tile
+
+        charts = tk.Frame(self.session_tab, bg=BG)
+        charts.pack(fill="both", expand=True)
+        self.session_cpu_graph = HistoryGraph(charts, "RECORDED CPU - LATEST 60 SAMPLES", CYAN)
+        self.session_memory_graph = HistoryGraph(charts, "RECORDED MEMORY - LATEST 60 SAMPLES", PURPLE)
+        self.session_cpu_graph.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        self.session_memory_graph.pack(side="left", fill="both", expand=True, padx=(5, 0))
+
+        event_card = self._card(self.session_tab)
+        event_card.pack(fill="x", pady=(10, 0))
+        tk.Label(event_card, text="THRESHOLD EVENTS", bg=CARD, fg=MUTED,
+                 font=("Segoe UI", 7, "bold")).pack(anchor="w", padx=13, pady=(8, 2))
+        self.session_event_label = tk.Label(
+            event_card, text="No threshold events. Alerts use CPU/RAM >= 85% and storage >= 90%.",
+            bg=CARD, fg=GREEN, anchor="w", justify="left", font=("Segoe UI", 8)
+        )
+        self.session_event_label.pack(fill="x", padx=13, pady=(0, 8))
+        self.session_events: deque[str] = deque(maxlen=3)
+        self.last_session_alert = ""
+        self._update_session_ui()
+
+    def toggle_recording(self) -> None:
+        if self.session.active:
+            self.session.pause()
+            self.record_button.configure(text="RESUME", bg=GREEN)
+            self.recording_orb.configure(text="PAUSED", bg=ORANGE)
+            self.session_subtitle.configure(text="Recording paused; live dashboard remains active")
+        else:
+            self.session.resume()
+            self.record_button.configure(text="PAUSE", bg=ORANGE)
+            self.recording_orb.configure(text="REC", bg=RED)
+            self.session_subtitle.configure(text="Recording one accurate sample per second")
+
+    def reset_session(self) -> None:
+        self.session.reset()
+        self.session_cpu_graph.clear()
+        self.session_memory_graph.clear()
+        self.session_events.clear()
+        self.last_session_alert = ""
+        self.session_event_label.configure(
+            text="Session reset. Waiting for new samples.", fg=GREEN
+        )
+        self.record_button.configure(text="PAUSE", bg=ORANGE)
+        self.recording_orb.configure(text="REC", bg=RED)
+        self.session_subtitle.configure(text="Recording a new session")
+        self._update_session_ui()
+
+    def export_session(self) -> None:
+        if not self.session.sample_count:
+            messagebox.showinfo("Nothing to export", "Record at least one sample first.", parent=self)
+            return
+        root = Path(__file__).resolve().parents[1]
+        default_name = f"nexus_session_{datetime.now():%Y%m%d_%H%M%S}.csv"
+        destination = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export NEXUS session",
+            initialdir=root,
+            initialfile=default_name,
+            defaultextension=".csv",
+            filetypes=(("CSV telemetry", "*.csv"), ("All files", "*.*")),
+        )
+        if not destination:
+            return
+        try:
+            path = self.session.export_csv(destination)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Export failed", str(exc), parent=self)
+            return
+        messagebox.showinfo("Session exported", f"Saved {self.session.sample_count} samples to:\n{path}", parent=self)
+
+    def _update_session_ui(self) -> None:
+        summary = self.session.summary()
+        self.session_tiles["duration"].set(duration_text(summary["duration_seconds"]), "recorded time span")
+        self.session_tiles["cpu_average"].set(value_text(summary["cpu_average"], "%"), "mean recorded load")
+        self.session_tiles["cpu_peak"].set(value_text(summary["cpu_peak"], "%"), "highest recorded load")
+        self.session_tiles["memory_peak"].set(value_text(summary["memory_peak"], "%"), "highest recorded use")
+        self.session_tiles["samples"].set(str(summary["samples"]), "one per second")
+        self.session_tiles["alerts"].set(str(summary["alert_samples"]), "threshold samples")
+
     def _build_tests(self) -> None:
         card = self._card(self.tests)
         card.pack(fill="both", expand=True)
@@ -336,24 +862,54 @@ class HardwareDashboard(tk.Tk):
     def _build_compact(self) -> None:
         self.compact_panel = self._card(self.content)
         top = tk.Frame(self.compact_panel, bg=CARD)
-        top.pack(fill="x", padx=16, pady=(14, 8))
-        tk.Label(top, text="LIVE SYSTEM STATUS", bg=CARD, fg=CYAN,
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        top.pack(fill="x", padx=16, pady=(12, 7))
+        self.hud_drag_handle = tk.Label(top, text="NEXUS // DESKTOP HUD", bg=CARD, fg=CYAN,
+                                        cursor="fleur", font=("Segoe UI", 9, "bold"))
+        self.hud_drag_handle.pack(side="left")
         self.compact_updated = tk.Label(top, text="Waiting", bg=CARD, fg=MUTED,
                                         font=("Segoe UI", 8))
-        self.compact_updated.pack(side="right")
+        self.compact_updated.pack(side="left", padx=14)
+        tk.Button(top, text="X", command=self.close, bg=CARD_2, fg=RED,
+                  activebackground=RED, activeforeground="white", relief="flat",
+                  cursor="hand2", padx=8, pady=3, font=("Segoe UI", 8, "bold")).pack(side="right")
+        tk.Button(top, text="RESTORE", command=self.exit_hud, bg=CARD_2, fg=TEXT,
+                  activebackground=BORDER, activeforeground=TEXT, relief="flat",
+                  cursor="hand2", padx=10, pady=3, font=("Segoe UI", 7, "bold")).pack(side="right", padx=6)
         tiles = tk.Frame(self.compact_panel, bg=CARD)
         tiles.pack(fill="both", expand=True, padx=14, pady=(0, 14))
-        self.compact_cpu = MetricTile(tiles, "CPU LOAD", CYAN)
-        self.compact_memory = MetricTile(tiles, "MEMORY", PURPLE)
-        self.compact_disk = MetricTile(tiles, "SYSTEM DRIVE", GREEN)
-        for column, tile in enumerate((self.compact_cpu, self.compact_memory, self.compact_disk)):
-            tile.grid(row=0, column=column, sticky="nsew", padx=5)
+        hud_cells = []
+        for column in range(3):
+            cell = tk.Frame(tiles, bg=CARD_2, highlightbackground=BORDER, highlightthickness=1)
+            cell.grid(row=0, column=column, sticky="nsew", padx=5)
+            hud_cells.append(cell)
             tiles.columnconfigure(column, weight=1, uniform="compact")
         tiles.rowconfigure(0, weight=1)
+        self.compact_cpu = MetricTile(hud_cells[0], "CPU LOAD", CYAN)
+        self.compact_cpu.pack(fill="x")
+        self.hud_cpu_graph = MiniSparkline(hud_cells[0], CYAN)
+        self.hud_cpu_graph.pack(fill="both", expand=True, padx=8, pady=(0, 7))
+        self.compact_memory = MetricTile(hud_cells[1], "MEMORY", PURPLE)
+        self.compact_memory.pack(fill="x")
+        self.hud_memory_graph = MiniSparkline(hud_cells[1], PURPLE)
+        self.hud_memory_graph.pack(fill="both", expand=True, padx=8, pady=(0, 7))
+        self.compact_disk = MetricTile(hud_cells[2], "STORAGE USED", GREEN)
+        self.compact_disk.pack(fill="x")
+        opacity = tk.Frame(hud_cells[2], bg=CARD_2)
+        opacity.pack(fill="x", padx=8, pady=(3, 7))
+        tk.Label(opacity, text="OPACITY", bg=CARD_2, fg=MUTED,
+                 font=("Segoe UI", 7, "bold")).pack(anchor="w")
+        for percent in (70, 85, 100):
+            tk.Button(opacity, text=str(percent), command=lambda p=percent: self.set_hud_opacity(p),
+                      bg=CARD, fg=TEXT, activebackground=BORDER, activeforeground=TEXT,
+                      relief="flat", cursor="hand2", padx=6, pady=2,
+                      font=("Segoe UI", 7)).pack(side="left", padx=(0, 4), pady=(5, 0))
+        for widget in (top, self.hud_drag_handle, self.compact_updated):
+            widget.bind("<ButtonPress-1>", self._start_hud_drag)
+            widget.bind("<B1-Motion>", self._drag_hud)
 
     def _build_footer(self) -> None:
         footer = tk.Frame(self, bg=PANEL, height=34)
+        self.footer = footer
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
         self.updated_label = tk.Label(footer, text="Waiting for first reading", bg=PANEL,
@@ -394,14 +950,70 @@ class HardwareDashboard(tk.Tk):
             return
         self.latest_snapshot = snapshot
         timestamp = datetime.fromtimestamp(snapshot.captured_at).strftime("%H:%M:%S")
-        self.live_status.configure(text="*  LIVE", fg=GREEN)
+        self.live_status.configure(text="LIVE", fg=GREEN)
         self.updated_label.configure(text=f"Updated {timestamp}  |  1 sec refresh")
         self.compact_updated.configure(text=f"Updated {timestamp}")
         self.cpu_gauge.set(snapshot.cpu_usage_percent)
         self.memory_gauge.set(snapshot.memory_used_percent)
+        self.disk_gauge.title = f"{snapshot.system_drive} STORAGE USED"
         self.disk_gauge.set(snapshot.disk_used_percent)
-        self.cpu_graph.add(snapshot.cpu_usage_percent)
-        self.memory_graph.add(snapshot.memory_used_percent)
+        if not self.graphs_paused:
+            self.cpu_graph.add(snapshot.cpu_usage_percent)
+            self.memory_graph.add(snapshot.memory_used_percent)
+            self.overview_cpu_graph.add(snapshot.cpu_usage_percent)
+            self.overview_memory_graph.add(snapshot.memory_used_percent)
+        self.hud_cpu_graph.add(snapshot.cpu_usage_percent)
+        self.hud_memory_graph.add(snapshot.memory_used_percent)
+        self._update_storage(snapshot)
+
+        captured = self.session.capture(snapshot)
+        if captured is not None:
+            self.session_cpu_graph.add(snapshot.cpu_usage_percent)
+            self.session_memory_graph.add(snapshot.memory_used_percent)
+            if captured.alert and captured.alert != self.last_session_alert:
+                event = f"{timestamp}  {captured.alert}"
+                self.session_events.appendleft(event)
+                self.session_event_label.configure(text="   |   ".join(self.session_events), fg=RED)
+            elif not captured.alert and self.last_session_alert:
+                self.session_events.appendleft(f"{timestamp}  Thresholds returned to normal")
+                self.session_event_label.configure(text="   |   ".join(self.session_events), fg=GREEN)
+            self.last_session_alert = captured.alert
+        self._update_session_ui()
+        session_summary = self.session.summary()
+
+        high_cpu = snapshot.cpu_usage_percent is not None and snapshot.cpu_usage_percent >= 85
+        high_memory = snapshot.memory_used_percent is not None and snapshot.memory_used_percent >= 85
+        critical_drives = [drive for drive in snapshot.drives if drive.used_percent >= 90]
+        elevated_drives = [drive for drive in snapshot.drives if drive.used_percent >= 75]
+        storage_alert = bool(critical_drives)
+        if high_cpu or high_memory or storage_alert:
+            self.hero_status.configure(text="ATTENTION", fg=RED)
+            reasons = []
+            if high_cpu: reasons.append("CPU load >= 85%")
+            if high_memory: reasons.append("memory use >= 85%")
+            if storage_alert:
+                reasons.append(
+                    "drive capacity >= 90%: " + ", ".join(drive.name for drive in critical_drives)
+                )
+            self.hero_detail.configure(text="  |  ".join(reasons))
+        elif ((snapshot.cpu_usage_percent or 0) >= 65 or
+              (snapshot.memory_used_percent or 0) >= 65 or elevated_drives):
+            if elevated_drives:
+                self.hero_status.configure(text="CAPACITY ELEVATED", fg=ORANGE)
+                self.hero_detail.configure(
+                    text="75%+ used: " + ", ".join(
+                        f"{drive.name} {drive.used_percent:.1f}%" for drive in elevated_drives
+                    )
+                )
+            else:
+                self.hero_status.configure(text="ELEVATED LOAD", fg=ORANGE)
+                self.hero_detail.configure(text="A live resource is above 65%; this is informational")
+        else:
+            self.hero_status.configure(text="SYSTEM NOMINAL", fg=GREEN)
+            self.hero_detail.configure(text="All displayed thresholds are within the normal band")
+        self.hero_uptime.configure(text=uptime_text(snapshot.uptime_seconds))
+        self.hero_peak.configure(text=value_text(session_summary["cpu_peak"], "%"))
+        self.hero_samples.configure(text=str(session_summary["samples"]))
 
         cores = (f"{snapshot.physical_cores} cores / {snapshot.logical_cpus} threads"
                  if snapshot.physical_cores else f"{snapshot.logical_cpus} logical processors")
@@ -412,10 +1024,12 @@ class HardwareDashboard(tk.Tk):
             text=f"{value_text(snapshot.memory_installed_gib, ' GiB')} installed  |  "
                  f"{value_text(snapshot.memory_used_gib, ' GiB')} in use"
         )
-        self.fact_labels["SYSTEM DRIVE"].configure(
-            text=f"{snapshot.system_drive}  |  {snapshot.disk_free_gib:.1f} GiB free of "
-                 f"{snapshot.disk_total_gib:.1f} GiB"
-        )
+        overview_drives = "\n".join(
+            f"{drive.name}  {drive.used_percent:.1f}% used  |  "
+            f"{drive.free_gib:.1f} GiB free / {drive.total_gib:.1f} GiB"
+            for drive in snapshot.drives
+        ) or "No fixed drive data available"
+        self.fact_labels["DRIVES"].configure(text=overview_drives)
         self.fact_labels["MOTHERBOARD"].configure(text=self.hardware.motherboard)
         self.fact_labels["OPERATING SYSTEM"].configure(text=snapshot.operating_system)
 
@@ -452,25 +1066,67 @@ class HardwareDashboard(tk.Tk):
         self.compact_cpu.set(value_text(snapshot.cpu_usage_percent, "%"), cores)
         self.compact_memory.set(value_text(snapshot.memory_used_percent, "%"),
                                 f"{value_text(snapshot.memory_used_gib, ' GiB')} used")
-        self.compact_disk.set(value_text(snapshot.disk_used_percent, "%"),
-                              f"{snapshot.disk_free_gib:.1f} GiB free on {snapshot.system_drive}")
+        fullest_drive = max(snapshot.drives, key=lambda drive: drive.used_percent, default=None)
+        if fullest_drive is None:
+            self.compact_disk.set("N/A", "No fixed volume data")
+        else:
+            self.compact_disk.set(
+                f"{fullest_drive.name}  {fullest_drive.used_percent:.1f}%",
+                f"most used; {fullest_drive.free_gib:.1f} GiB free"
+            )
 
     def toggle_compact(self) -> None:
-        self.compact = not self.compact
-        self.attributes("-topmost", self.compact)
         if self.compact:
-            self.normal_geometry = self.geometry()
-            self.tabs.pack_forget()
-            self.compact_panel.pack(fill="both", expand=True, padx=14, pady=14)
-            self.minsize(610, 300)
-            self.geometry("680x340")
-            self.compact_button.configure(text="FULL DASHBOARD")
-        else:
-            self.compact_panel.pack_forget()
-            self.tabs.pack(fill="both", expand=True, padx=16, pady=14)
-            self.minsize(860, 640)
-            self.geometry(self.normal_geometry)
-            self.compact_button.configure(text="COMPACT MODE")
+            self.exit_hud()
+            return
+        self.compact = True
+        self.normal_geometry = self.geometry()
+        self.tabs.pack_forget()
+        self.header.pack_forget()
+        self.scanline.pack_forget()
+        self.footer.pack_forget()
+        self.compact_panel.pack(fill="both", expand=True, padx=2, pady=2)
+        self.minsize(620, 280)
+        width, height = 720, 330
+        x = max(10, self.winfo_screenwidth() - width - 30)
+        self.geometry(f"{width}x{height}+{x}+30")
+        self.attributes("-topmost", True)
+        self.attributes("-alpha", 0.92)
+        self.overrideredirect(True)
+        self.hud_borderless = True
+
+    def exit_hud(self) -> None:
+        if not self.compact:
+            return
+        self.overrideredirect(False)
+        self.hud_borderless = False
+        self.attributes("-topmost", False)
+        self.attributes("-alpha", 1.0)
+        self.compact_panel.pack_forget()
+        self.header.pack(fill="x", before=self.content)
+        self.scanline.pack(fill="x", before=self.content)
+        self.tabs.pack(fill="both", expand=True, padx=16, pady=14)
+        self.footer.pack(fill="x", side="bottom")
+        self.minsize(860, 640)
+        self.geometry(self.normal_geometry)
+        self.compact = False
+        self.after(50, self._enable_dark_titlebar)
+
+    def set_hud_opacity(self, percent: int) -> None:
+        if self.compact:
+            self.attributes("-alpha", max(0.55, min(1.0, percent / 100)))
+
+    def _start_hud_drag(self, event) -> None:
+        self._drag_origin = (event.x_root - self.winfo_x(), event.y_root - self.winfo_y())
+
+    def _drag_hud(self, event) -> None:
+        if not self.compact:
+            return
+        x = event.x_root - self._drag_origin[0]
+        y = event.y_root - self._drag_origin[1]
+        x = max(0, min(x, self.winfo_screenwidth() - self.winfo_width()))
+        y = max(0, min(y, self.winfo_screenheight() - self.winfo_height()))
+        self.geometry(f"+{x}+{y}")
 
     def run_tests(self) -> None:
         self.test_button.configure(state="disabled", text="CHECKING...")

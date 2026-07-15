@@ -293,7 +293,10 @@ def _drive_info() -> tuple[DriveInfo, ...]:
             name=root.rstrip("\\/") or root,
             total_gib=round(usage.total / GIB, 2),
             free_gib=round(usage.free / GIB, 2),
-            used_percent=round((usage.total - usage.free) / usage.total * 100, 1),
+            used_percent=(
+                round((usage.total - usage.free) / usage.total * 100, 1)
+                if usage.total else 0.0
+            ),
         ))
     return tuple(drives)
 
@@ -317,10 +320,25 @@ def _os_name() -> str:
 
 def take_snapshot(disk_path: str | Path | None = None) -> Snapshot:
     hardware = hardware_info()
-    system_drive = str(Path(disk_path or os.environ.get("SystemDrive", Path.home().anchor) or "."))
+    requested_path = Path(disk_path or os.environ.get("SystemDrive", Path.home().anchor) or ".")
+    volume_root = requested_path.anchor or str(requested_path)
+    system_drive = str(volume_root)
     if len(system_drive) == 2 and system_drive[1] == ":":
         system_drive += "\\"
-    disk = shutil.disk_usage(system_drive)
+    drives = _drive_info()
+    system_name = system_drive.rstrip("\\/") or system_drive
+    system_volume = next((drive for drive in drives if drive.name == system_name), None)
+    if system_volume is None:
+        disk = shutil.disk_usage(system_drive)
+        disk_total_gib = round(disk.total / GIB, 2)
+        disk_free_gib = round(disk.free / GIB, 2)
+        disk_used_percent = (
+            round((disk.total - disk.free) / disk.total * 100, 1) if disk.total else 0.0
+        )
+    else:
+        disk_total_gib = system_volume.total_gib
+        disk_free_gib = system_volume.free_gib
+        disk_used_percent = system_volume.used_percent
     total_mem, used_mem, available_mem, memory_percent = memory_info()
     battery, plugged = battery_info()
     return Snapshot(
@@ -336,14 +354,14 @@ def take_snapshot(disk_path: str | Path | None = None) -> Snapshot:
         memory_available_gib=available_mem,
         memory_used_percent=memory_percent,
         system_drive=system_drive.rstrip("\\/"),
-        disk_total_gib=round(disk.total / GIB, 2),
-        disk_free_gib=round(disk.free / GIB, 2),
-        disk_used_percent=round((disk.total - disk.free) / disk.total * 100, 1),
+        disk_total_gib=disk_total_gib,
+        disk_free_gib=disk_free_gib,
+        disk_used_percent=disk_used_percent,
         battery_percent=battery,
         plugged_in=plugged,
         uptime_seconds=_uptime_seconds(),
         captured_at=time.time(),
-        drives=_drive_info(),
+        drives=drives,
     )
 
 
