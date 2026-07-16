@@ -3,7 +3,23 @@
 A live Windows and Linux hardware dashboard made by
 [Kieranmcm07](https://github.com/Kieranmcm07).
 
-## New in v3.3
+## New in v3.4
+
+- New graphite black-and-white interface with restrained red focus and alert accents
+- True Canvas-drawn rounded tabs, buttons, main panels, drive cards, adapter cards,
+  gauges, graphs, metric tiles, and Desktop HUD cells
+- Stronger two- and three-pixel visual hierarchy for borders, gauges, graphs,
+  progress tracks, selected tabs, and keyboard focus
+- Runtime font selection uses modern Windows fonts when installed and portable
+  Inter, Noto Sans, DejaVu Sans, and DejaVu Sans Mono fallbacks on Linux
+- A single capped animation clock drives graph sweeps, gauge and sparkline halos,
+  live-status ripples, metric update pulses, and the red header scanner
+- Smooth drive-capacity transitions and animated rounded-button hover, press,
+  keyboard-focus, and selected-tab states
+- Ambient animation pauses for hidden tabs and minimized windows so the monitor
+  does not add unnecessary load to the computer it is measuring
+
+## Added in v3.3
 
 - First-class Linux support using information exposed by `/proc`, `/sys`, and
   the local operating system
@@ -16,12 +32,11 @@ A live Windows and Linux hardware dashboard made by
   safely ignores optional window-manager hints that are unavailable
 - Platform-neutral dashboard and command-line labels accurately describe where
   readings come from
-- Refreshed cyan-violet-green palette with rounded metric tiles, graph surfaces,
-  clearer accents, and more readable long Linux mount paths
+- Responsive metric tiles, graph surfaces, and readable long Linux mount paths
 
 ## Dashboard features
 
-- Animated neon gauges, a live status pulse, scan line, clock, and telemetry banner
+- Animated gauges, live-status ripple, red scanner, clock, and telemetry banner
 - A live **Network** tab with download/upload rates, session totals and peaks,
   auto-scaled 60-second graphs, and connected-adapter details
 - **Session Insights** records one sample per second with average/peak statistics,
