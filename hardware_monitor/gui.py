@@ -28,18 +28,19 @@ from hardware_monitor.network import (
 from hardware_monitor.recorder import SessionRecorder
 
 
-BG = "#060a13"
-PANEL = "#0a1222"
-CARD = "#0e1a30"
-CARD_2 = "#101f38"
-BORDER = "#1c3457"
-TEXT = "#eef7ff"
-MUTED = "#7e95b5"
-CYAN = "#20dcff"
-GREEN = "#26efa1"
-PURPLE = "#a775ff"
-ORANGE = "#ffb454"
-RED = "#ff5d78"
+BG = "#050914"
+PANEL = "#081426"
+CARD = "#0c1a2e"
+CARD_2 = "#10243d"
+BORDER = "#285077"
+TEXT = "#f4f9ff"
+MUTED = "#91a9c8"
+CYAN = "#35d9ff"
+GREEN = "#43e6aa"
+PURPLE = "#b58cff"
+ORANGE = "#ffc166"
+RED = "#ff6685"
+GRAPH_FILL = "#102b43"
 
 GITHUB_URL = "https://github.com/Kieranmcm07"
 
@@ -63,6 +64,36 @@ def duration_text(seconds: float | None) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def compact_volume_name(name: str, limit: int = 24) -> str:
+    """Keep long mount paths readable without hiding the capacity percentage."""
+    if len(name) <= limit:
+        return name
+    left = (limit - 1) // 2
+    right = limit - left - 1
+    return f"{name[:left]}…{name[-right:]}"
+
+
+def rounded_rectangle(
+    canvas: tk.Canvas,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    radius: float = 16,
+    **options,
+) -> int:
+    """Draw a smooth rounded panel using only standard Tk canvas primitives."""
+    radius = max(2.0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
+    points = (
+        x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
+        x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
+        x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1,
+    )
+    return canvas.create_polygon(
+        points, smooth=True, splinesteps=32, **options
+    )
 
 
 class Gauge(tk.Canvas):
@@ -102,6 +133,10 @@ class Gauge(tk.Canvas):
     def draw(self) -> None:
         self.delete("all")
         s, pad = self.size, 14
+        rounded_rectangle(
+            self, 2, 2, s - 2, s - 2, 20,
+            fill=CARD_2, outline=BORDER, width=1
+        )
         for width, shade in ((18, "#0b2035"), (14, "#102a45"), (10, "#1a2b47")):
             self.create_arc(pad, pad, s - pad, s - pad, start=225, extent=-270,
                             style="arc", width=width, outline=shade)
@@ -135,7 +170,7 @@ class Gauge(tk.Canvas):
 
 class HistoryGraph(tk.Canvas):
     def __init__(self, parent, title: str, color: str):
-        super().__init__(parent, bg=CARD, height=190, highlightthickness=0)
+        super().__init__(parent, bg=BG, height=190, highlightthickness=0)
         self.title = title
         self.color = color
         self.values: deque[float | None] = deque(maxlen=60)
@@ -155,6 +190,10 @@ class HistoryGraph(tk.Canvas):
         self.delete("all")
         width = max(self.winfo_width(), 120)
         height = max(self.winfo_height(), 110)
+        rounded_rectangle(
+            self, 2, 2, width - 2, height - 2, 18,
+            fill=CARD, outline=BORDER, width=1
+        )
         available = [value for value in self.values if value is not None]
         if available:
             current = self.values[-1]
@@ -202,7 +241,7 @@ class HistoryGraph(tk.Canvas):
             if len(segment) >= 4:
                 self.create_polygon(
                     [segment[0], bottom] + segment + [segment[-2], bottom],
-                    fill="#102b42", outline="", stipple="gray50"
+                    fill=GRAPH_FILL, outline="", stipple="gray50"
                 )
                 self.create_line(segment, fill=self.color, width=2)
             else:
@@ -226,7 +265,7 @@ class RateHistoryGraph(tk.Canvas):
     """Sixty-sample network graph with a scale that follows recent traffic."""
 
     def __init__(self, parent, title: str, color: str):
-        super().__init__(parent, bg=CARD, height=175, highlightthickness=0)
+        super().__init__(parent, bg=BG, height=175, highlightthickness=0)
         self.title = title
         self.color = color
         self.values: deque[float | None] = deque(maxlen=60)
@@ -244,6 +283,10 @@ class RateHistoryGraph(tk.Canvas):
         self.delete("all")
         width = max(self.winfo_width(), 160)
         height = max(self.winfo_height(), 110)
+        rounded_rectangle(
+            self, 2, 2, width - 2, height - 2, 18,
+            fill=CARD, outline=BORDER, width=1
+        )
         available = [value for value in self.values if value is not None]
         current = self.values[-1] if self.values else None
         peak = max(available, default=0.0)
@@ -290,7 +333,7 @@ class RateHistoryGraph(tk.Canvas):
             if len(segment) >= 4:
                 self.create_polygon(
                     [segment[0], bottom] + segment + [segment[-2], bottom],
-                    fill="#102b42", outline="", stipple="gray50"
+                    fill=GRAPH_FILL, outline="", stipple="gray50"
                 )
                 self.create_line(segment, fill=self.color, width=2)
             else:
@@ -321,6 +364,10 @@ class MiniSparkline(tk.Canvas):
     def draw(self) -> None:
         self.delete("all")
         width, height = max(80, self.winfo_width()), max(35, self.winfo_height())
+        rounded_rectangle(
+            self, 1, 1, width - 1, height - 1, 11,
+            fill="#0b192c", outline=BORDER, width=1
+        )
         if not any(value is not None for value in self.values):
             self.create_text(width / 2, height / 2, text="WAITING", fill=MUTED,
                              font=("Segoe UI", 7, "bold"))
@@ -369,25 +416,53 @@ class NeonScanline(tk.Canvas):
         self.after(30, self.animate)
 
 
-class MetricTile(tk.Frame):
+class MetricTile(tk.Canvas):
     def __init__(self, parent, label: str, color: str):
-        super().__init__(parent, bg=CARD_2, highlightbackground=BORDER, highlightthickness=1)
-        tk.Label(self, text=label, bg=CARD_2, fg=color,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=13, pady=(10, 2))
-        self.value = tk.Label(self, text="N/A", bg=CARD_2, fg=TEXT,
-                              font=("Segoe UI Semibold", 16))
-        self.value.pack(anchor="w", padx=13)
-        self.detail = tk.Label(self, text="Waiting for data", bg=CARD_2, fg=MUTED,
-                               font=("Segoe UI", 8))
-        self.detail.pack(anchor="w", padx=13, pady=(0, 10))
+        parent_bg = str(parent.cget("bg"))
+        super().__init__(
+            parent, bg=parent_bg, width=120, height=94, highlightthickness=0,
+            borderwidth=0
+        )
+        self.label_text = label
+        self.color = color
+        self.value_text = "N/A"
+        self.detail_text = "Waiting for data"
+        self.surface = CARD if parent_bg.lower() == CARD_2.lower() else CARD_2
+        self.bind("<Configure>", lambda _event: self.draw())
 
     def set(self, value: str, detail: str) -> None:
-        self.value.configure(text=value)
-        self.detail.configure(text=detail)
+        self.value_text = value
+        self.detail_text = detail
+        self.draw()
+
+    def draw(self) -> None:
+        self.delete("all")
+        width = max(110, self.winfo_width())
+        height = max(90, self.winfo_height())
+        rounded_rectangle(
+            self, 2, 2, width - 2, height - 2, 15,
+            fill=self.surface, outline=BORDER, width=1
+        )
+        rounded_rectangle(
+            self, 12, 12, 17, 31, 2,
+            fill=self.color, outline=self.color
+        )
+        self.create_text(
+            25, 21, anchor="w", text=self.label_text, fill=self.color,
+            font=("Segoe UI", 8, "bold")
+        )
+        self.create_text(
+            14, 50, anchor="w", text=self.value_text, fill=TEXT,
+            font=("Segoe UI Semibold", 16)
+        )
+        self.create_text(
+            14, 70, anchor="nw", width=max(80, width - 28),
+            text=self.detail_text, fill=MUTED, font=("Segoe UI", 7)
+        )
 
 
 class DriveCard(tk.Frame):
-    """Responsive fixed-drive card backed by Windows volume data."""
+    """Responsive storage card backed by operating-system volume data."""
 
     def __init__(self, parent, name: str):
         super().__init__(parent, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -401,18 +476,26 @@ class DriveCard(tk.Frame):
         body.pack(side="left", fill="both", expand=True, padx=16, pady=13)
         heading = tk.Frame(body, bg=CARD)
         heading.pack(fill="x")
+        heading.columnconfigure(0, weight=1)
         self.drive_label = tk.Label(heading, text=name, bg=CARD, fg=TEXT,
-                                    font=("Cascadia Mono", 19, "bold"))
-        self.drive_label.pack(side="left")
+                                    anchor="w", font=("Cascadia Mono", 16, "bold"))
+        self.drive_label.grid(row=0, column=0, sticky="ew")
         self.system_badge = tk.Label(heading, text="", bg=CARD, fg=CYAN,
                                      font=("Segoe UI", 7, "bold"))
-        self.system_badge.pack(side="left", padx=9)
+        self.system_badge.grid(row=1, column=0, sticky="w", pady=(3, 0))
         self.percent_label = tk.Label(heading, text="0.0% USED", bg=CARD, fg=GREEN,
                                       font=("Cascadia Mono", 12, "bold"))
-        self.percent_label.pack(side="right")
+        self.percent_label.grid(row=0, column=1, sticky="e", padx=(10, 0))
         self.capacity_label = tk.Label(body, text="Waiting for volume data", bg=CARD,
-                                       fg=MUTED, font=("Segoe UI", 9))
+                                       fg=MUTED, anchor="w", justify="left",
+                                       font=("Segoe UI", 9))
         self.capacity_label.pack(anchor="w", pady=(4, 9))
+        body.bind(
+            "<Configure>",
+            lambda event: self.capacity_label.configure(
+                wraplength=max(160, event.width - 4)
+            ),
+        )
         self.bar = tk.Canvas(body, bg=CARD, height=22, highlightthickness=0)
         self.bar.pack(fill="x")
         self.bar.bind("<Configure>", lambda _event: self._draw_bar())
@@ -425,14 +508,20 @@ class DriveCard(tk.Frame):
         self.percent = max(0.0, min(100.0, float(drive.used_percent)))
         self.color = RED if self.percent >= 90 else ORANGE if self.percent >= 75 else GREEN
         state = "CAPACITY CRITICAL" if self.percent >= 90 else "CAPACITY ELEVATED" if self.percent >= 75 else "NORMAL CAPACITY"
-        self.drive_label.configure(text=drive.name)
-        self.system_badge.configure(text="WINDOWS SYSTEM" if is_system else "FIXED DRIVE")
-        self.percent_label.configure(text=f"{self.percent:.1f}% USED", fg=self.color)
-        self.capacity_label.configure(
-            text=f"{drive.free_gib:.1f} GiB free  /  {drive.total_gib:.1f} GiB total"
+        display_name = compact_volume_name(drive.name)
+        self.drive_label.configure(text=display_name)
+        self.system_badge.configure(
+            text="SYSTEM VOLUME" if is_system else "LOCAL VOLUME"
         )
+        self.percent_label.configure(text=f"{self.percent:.1f}% USED", fg=self.color)
+        capacity = (
+            f"{drive.free_gib:.1f} GiB free  /  {drive.total_gib:.1f} GiB total"
+        )
+        detail = f"{drive.name}\n{capacity}" if display_name != drive.name else capacity
+        self.capacity_label.configure(text=detail)
         self.state_label.configure(text=state, fg=self.color)
         self.rail.configure(bg=self.color)
+        self.configure(highlightbackground=self.color)
         self._draw_bar()
 
     def _draw_bar(self) -> None:
@@ -459,7 +548,7 @@ class NetworkAdapterCard(tk.Frame):
                               font=("Segoe UI Semibold", 11))
         self.alias.pack(anchor="w", padx=13, pady=(10, 0))
         self.description = tk.Label(
-            self, text="Waiting for Windows", bg=CARD_2, fg=MUTED,
+            self, text="Waiting for system data", bg=CARD_2, fg=MUTED,
             anchor="w", justify="left", wraplength=390, font=("Segoe UI", 8)
         )
         self.description.pack(fill="x", padx=13, pady=(1, 7))
@@ -479,9 +568,11 @@ class NetworkAdapterCard(tk.Frame):
         self.download.pack(side="right", padx=(0, 13))
 
     def set(self, adapter) -> None:
+        accent = PURPLE if adapter.kind == "Wi-Fi" else GREEN if adapter.kind == "Mobile broadband" else CYAN
         self.alias.configure(text=adapter.alias)
         self.description.configure(text=adapter.description)
-        self.kind.configure(text=adapter.kind.upper())
+        self.kind.configure(text=adapter.kind.upper(), fg=accent)
+        self.configure(highlightbackground=accent)
         receive_link = format_link_speed(adapter.receive_link_bps)
         transmit_link = format_link_speed(adapter.transmit_link_bps)
         link = receive_link if receive_link == transmit_link else f"{receive_link} down / {transmit_link} up"
@@ -537,6 +628,8 @@ class HardwareDashboard(tk.Tk):
                   foreground=[("selected", CYAN)])
 
     def _enable_dark_titlebar(self) -> None:
+        if platform.system() != "Windows":
+            return
         try:
             import ctypes
             enabled = ctypes.c_int(1)
@@ -655,7 +748,7 @@ class HardwareDashboard(tk.Tk):
         self.cpu_gauge.pack(side="left", expand=True, pady=10)
         self.memory_gauge = Gauge(gauges, "MEMORY USED", PURPLE)
         self.memory_gauge.pack(side="left", expand=True, pady=10)
-        self.disk_gauge = Gauge(gauges, "SYSTEM DRIVE", GREEN)
+        self.disk_gauge = Gauge(gauges, "SYSTEM VOLUME", GREEN)
         self.disk_gauge.pack(side="left", expand=True, pady=10)
 
         facts = tk.Frame(self.overview, bg=BG)
@@ -666,7 +759,7 @@ class HardwareDashboard(tk.Tk):
         self._overview_fact_columns = 0
         entries = (
             ("CPU", CYAN), ("GPU", GREEN), ("MEMORY", PURPLE),
-            ("DRIVES", ORANGE), ("MOTHERBOARD", CYAN), ("OPERATING SYSTEM", GREEN),
+            ("STORAGE", ORANGE), ("MOTHERBOARD", CYAN), ("OPERATING SYSTEM", GREEN),
         )
         for key, color in entries:
             card = self._card(facts)
@@ -770,7 +863,7 @@ class HardwareDashboard(tk.Tk):
                  font=("Segoe UI Semibold", 14)).pack(anchor="w")
         tk.Label(
             heading_text,
-            text="Windows adapter traffic; includes LAN/VPN data. Link speed is not an internet speed test.",
+            text="Physical-adapter traffic includes LAN and VPN overhead. Link speed is not an internet speed test.",
             bg=CARD, fg=MUTED, font=("Segoe UI", 8)
         ).pack(anchor="w", pady=(2, 0))
         self.network_status = tk.Label(heading, text="SCANNING ADAPTERS", bg=CARD,
@@ -811,7 +904,7 @@ class HardwareDashboard(tk.Tk):
         deck_title.pack(fill="x", padx=13, pady=(8, 3))
         tk.Label(deck_title, text="CONNECTED PHYSICAL ADAPTERS", bg=CARD, fg=TEXT,
                  font=("Segoe UI", 8, "bold")).pack(side="left")
-        tk.Label(deck_title, text="64-bit counters reported by Windows", bg=CARD, fg=MUTED,
+        tk.Label(deck_title, text="64-bit counters reported by the operating system", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 7)).pack(side="right")
         self.network_canvas = tk.Canvas(deck, bg=CARD, highlightthickness=0, height=108)
         network_scrollbar = ttk.Scrollbar(
@@ -888,7 +981,7 @@ class HardwareDashboard(tk.Tk):
         if rates.adapters:
             suffix = "ADAPTER" if len(rates.adapters) == 1 else "ADAPTERS"
             self.network_status.configure(
-                text=f"{len(rates.adapters)} ACTIVE {suffix}", fg=GREEN
+                text=f"{len(rates.adapters)} PHYSICAL {suffix}", fg=GREEN
             )
         else:
             self.network_status.configure(text="NO CONNECTED ADAPTER", fg=ORANGE)
@@ -920,11 +1013,11 @@ class HardwareDashboard(tk.Tk):
         rail.pack(side="left", fill="y")
         heading_text = tk.Frame(heading, bg=CARD)
         heading_text.pack(side="left", fill="both", expand=True, padx=16, pady=12)
-        tk.Label(heading_text, text="FIXED DRIVE DECK", bg=CARD, fg=ORANGE,
+        tk.Label(heading_text, text="STORAGE VOLUME DECK", bg=CARD, fg=ORANGE,
                  font=("Segoe UI Semibold", 15)).pack(anchor="w")
         tk.Label(
             heading_text,
-            text="Every fixed Windows volume is detected automatically; capacity used is not disk activity.",
+            text="Supported local volumes are detected automatically; capacity used is not disk activity.",
             bg=CARD, fg=MUTED, font=("Segoe UI", 8)
         ).pack(anchor="w", pady=(3, 0))
         self.storage_status = tk.Label(heading, text="SCANNING DRIVES", bg=CARD, fg=ORANGE,
@@ -935,7 +1028,7 @@ class HardwareDashboard(tk.Tk):
         summary.pack(fill="x", pady=(0, 10))
         self.storage_tiles: dict[str, MetricTile] = {}
         for column, (key, label, color) in enumerate((
-            ("count", "FIXED DRIVES", CYAN),
+            ("count", "STORAGE VOLUMES", CYAN),
             ("capacity", "TOTAL CAPACITY", PURPLE),
             ("free", "TOTAL FREE", GREEN),
             ("fullest", "MOST USED", ORANGE),
@@ -997,18 +1090,18 @@ class HardwareDashboard(tk.Tk):
         total = sum(drive.total_gib for drive in snapshot.drives)
         free = sum(drive.free_gib for drive in snapshot.drives)
         fullest = max(snapshot.drives, key=lambda drive: drive.used_percent, default=None)
-        self.storage_tiles["count"].set(str(count), "detected by Windows")
-        self.storage_tiles["capacity"].set(f"{total:.1f} GiB", "combined fixed volumes")
+        self.storage_tiles["count"].set(str(count), "detected by NEXUS")
+        self.storage_tiles["capacity"].set(f"{total:.1f} GiB", "combined local volumes")
         self.storage_tiles["free"].set(f"{free:.1f} GiB", "combined free capacity")
         if fullest is None:
-            self.storage_tiles["fullest"].set("N/A", "no fixed volumes")
-            self.storage_status.configure(text="NO FIXED DRIVE DATA", fg=RED)
+            self.storage_tiles["fullest"].set("N/A", "no storage volumes")
+            self.storage_status.configure(text="NO STORAGE DATA", fg=RED)
         else:
             self.storage_tiles["fullest"].set(
                 f"{fullest.name}  {fullest.used_percent:.1f}%", "capacity used"
             )
             state_color = RED if fullest.used_percent >= 90 else ORANGE if fullest.used_percent >= 75 else GREEN
-            status = "CAPACITY ALERT" if fullest.used_percent >= 90 else "CAPACITY ELEVATED" if fullest.used_percent >= 75 else "ALL DRIVES NORMAL"
+            status = "CAPACITY ALERT" if fullest.used_percent >= 90 else "CAPACITY ELEVATED" if fullest.used_percent >= 75 else "ALL VOLUMES NORMAL"
             self.storage_status.configure(text=status, fg=state_color)
         if layout_changed:
             self._layout_drive_cards(force=True)
@@ -1042,7 +1135,7 @@ class HardwareDashboard(tk.Tk):
         title.pack(fill="x", padx=20, pady=(17, 8))
         tk.Label(title, text="DETECTED HARDWARE", bg=CARD, fg=CYAN,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
-        tk.Label(title, text="Values reported by Windows", bg=CARD, fg=MUTED,
+        tk.Label(title, text="Values reported by the operating system", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="right")
 
         canvas = tk.Canvas(card, bg=CARD, highlightthickness=0)
@@ -1057,11 +1150,11 @@ class HardwareDashboard(tk.Tk):
         self.inventory_labels: dict[str, tk.Label] = {}
         for name in (
             "Computer", "CPU", "CPU topology", "Reported CPU clock", "Graphics",
-            "Installed memory", "Usable memory", "Motherboard", "BIOS", "Architecture",
+            "Reported memory", "Usable memory", "Motherboard", "BIOS", "Architecture",
             "Operating system", "Uptime", "Battery / power", "Temperatures / fans",
         ):
             self._inventory_row(name)
-        self._inventory_row("Fixed drives")
+        self._inventory_row("Storage volumes")
 
     def _inventory_row(self, name: str) -> None:
         row = tk.Frame(self.inventory, bg=CARD)
@@ -1431,15 +1524,15 @@ class HardwareDashboard(tk.Tk):
         self.fact_labels["CPU"].configure(text=f"{snapshot.processor}  |  {cores}")
         self.fact_labels["GPU"].configure(text=gpu_text)
         self.fact_labels["MEMORY"].configure(
-            text=f"{value_text(snapshot.memory_installed_gib, ' GiB')} installed  |  "
+            text=f"{value_text(snapshot.memory_installed_gib, ' GiB')} reported  |  "
                  f"{value_text(snapshot.memory_used_gib, ' GiB')} in use"
         )
         overview_drives = "\n".join(
             f"{drive.name}  {drive.used_percent:.1f}% used  |  "
             f"{drive.free_gib:.1f} GiB free / {drive.total_gib:.1f} GiB"
             for drive in snapshot.drives
-        ) or "No fixed drive data available"
-        self.fact_labels["DRIVES"].configure(text=overview_drives)
+        ) or "No storage volume data available"
+        self.fact_labels["STORAGE"].configure(text=overview_drives)
         self.fact_labels["MOTHERBOARD"].configure(text=self.hardware.motherboard)
         self.fact_labels["OPERATING SYSTEM"].configure(text=snapshot.operating_system)
 
@@ -1450,15 +1543,15 @@ class HardwareDashboard(tk.Tk):
         drives = "\n".join(
             f"{drive.name}  {drive.free_gib:.1f} GiB free / {drive.total_gib:.1f} GiB  ({drive.used_percent:.1f}% used)"
             for drive in snapshot.drives
-        ) or "No fixed drive data available"
+        ) or "No storage volume data available"
         inventory = {
             "Computer": snapshot.computer,
             "CPU": snapshot.processor,
             "CPU topology": cores,
-            "Reported CPU clock": (f"{self.hardware.cpu_max_mhz} MHz (Windows registry)"
+            "Reported CPU clock": (f"{self.hardware.cpu_max_mhz} MHz (system-reported)"
                                    if self.hardware.cpu_max_mhz else "Unavailable"),
             "Graphics": gpu_text,
-            "Installed memory": value_text(snapshot.memory_installed_gib, " GiB"),
+            "Reported memory": value_text(snapshot.memory_installed_gib, " GiB"),
             "Usable memory": (f"{value_text(snapshot.memory_total_gib, ' GiB')} total, "
                               f"{value_text(snapshot.memory_available_gib, ' GiB')} available"),
             "Motherboard": self.hardware.motherboard,
@@ -1468,7 +1561,7 @@ class HardwareDashboard(tk.Tk):
             "Uptime": uptime_text(snapshot.uptime_seconds),
             "Battery / power": power,
             "Temperatures / fans": "Unavailable - requires a trusted hardware sensor provider",
-            "Fixed drives": drives,
+            "Storage volumes": drives,
         }
         for name, value in inventory.items():
             self.inventory_labels[name].configure(text=value)
@@ -1478,7 +1571,7 @@ class HardwareDashboard(tk.Tk):
                                 f"{value_text(snapshot.memory_used_gib, ' GiB')} used")
         fullest_drive = max(snapshot.drives, key=lambda drive: drive.used_percent, default=None)
         if fullest_drive is None:
-            self.compact_disk.set("N/A", "No fixed volume data")
+            self.compact_disk.set("N/A", "No storage volume data")
         else:
             self.compact_disk.set(
                 f"{fullest_drive.name}  {fullest_drive.used_percent:.1f}%",
@@ -1489,16 +1582,16 @@ class HardwareDashboard(tk.Tk):
         if self.compact:
             self.exit_hud()
             return
-        self.normal_state = self.state()
+        self.normal_state = "zoomed" if self._is_window_maximized() else self.state()
         center_x = self.winfo_rootx() + self.winfo_width() // 2
         center_y = self.winfo_rooty() + self.winfo_height() // 2
         work_left, work_top, work_right, work_bottom = self._monitor_work_area(
             center_x, center_y
         )
         if self.normal_state == "zoomed":
-            # Windows ignores a small geometry while the window is maximized.
-            # Normalize first, then retain the real restore rectangle.
-            self.state("normal")
+            # Maximized windows can ignore a small geometry request. Normalize
+            # first, then retain the real restore rectangle.
+            self._set_window_maximized(False)
             self.update_idletasks()
         self.compact = True
         self.normal_geometry = self.geometry()
@@ -1512,18 +1605,18 @@ class HardwareDashboard(tk.Tk):
         x = max(work_left + 10, work_right - width - 30)
         y = max(work_top + 10, min(work_top + 30, work_bottom - height - 10))
         self.geometry(f"{width}x{height}{x:+d}{y:+d}")
-        self.attributes("-topmost", True)
-        self.attributes("-alpha", 0.92)
-        self.overrideredirect(True)
+        self._set_window_attribute("-topmost", True)
+        self._set_window_attribute("-alpha", 0.92)
+        self._set_borderless(True)
         self.hud_borderless = True
 
     def exit_hud(self) -> None:
         if not self.compact:
             return
-        self.overrideredirect(False)
+        self._set_borderless(False)
         self.hud_borderless = False
-        self.attributes("-topmost", False)
-        self.attributes("-alpha", 1.0)
+        self._set_window_attribute("-topmost", False)
+        self._set_window_attribute("-alpha", 1.0)
         self.compact_panel.pack_forget()
         self.header.pack(fill="x", before=self.content)
         self.scanline.pack(fill="x", before=self.content)
@@ -1533,12 +1626,51 @@ class HardwareDashboard(tk.Tk):
         self.geometry(self.normal_geometry)
         self.compact = False
         if self.normal_state == "zoomed":
-            self.after(50, lambda: self.state("zoomed") if not self.compact else None)
+            self.after(
+                50,
+                lambda: self._set_window_maximized(True) if not self.compact else None,
+            )
         self.after(50, self._enable_dark_titlebar)
 
     def set_hud_opacity(self, percent: int) -> None:
         if self.compact:
-            self.attributes("-alpha", max(0.55, min(1.0, percent / 100)))
+            self._set_window_attribute(
+                "-alpha", max(0.55, min(1.0, percent / 100))
+            )
+
+    def _set_window_attribute(self, name: str, value: object) -> None:
+        """Apply an optional window-manager hint without breaking the HUD."""
+        try:
+            self.attributes(name, value)
+        except tk.TclError:
+            # Some X11/Wayland window managers do not implement every Tk hint.
+            pass
+
+    def _is_window_maximized(self) -> bool:
+        if platform.system() == "Windows":
+            return self.state() == "zoomed"
+        try:
+            return bool(self.attributes("-zoomed"))
+        except tk.TclError:
+            return self.state() == "zoomed"
+
+    def _set_window_maximized(self, enabled: bool) -> None:
+        try:
+            if platform.system() == "Windows":
+                self.state("zoomed" if enabled else "normal")
+            else:
+                self.attributes("-zoomed", enabled)
+        except tk.TclError:
+            try:
+                self.state("zoomed" if enabled else "normal")
+            except tk.TclError:
+                pass
+
+    def _set_borderless(self, enabled: bool) -> None:
+        try:
+            self.overrideredirect(enabled)
+        except tk.TclError:
+            pass
 
     def _start_hud_drag(self, event) -> None:
         self._drag_origin = (event.x_root - self.winfo_x(), event.y_root - self.winfo_y())
@@ -1554,7 +1686,7 @@ class HardwareDashboard(tk.Tk):
         self.geometry(f"{x:+d}{y:+d}")
 
     def _monitor_work_area(self, x: int, y: int) -> tuple[int, int, int, int]:
-        """Return the nearest monitor work area, including negative coordinates."""
+        """Return the nearest work area or the virtual desktop as a fallback."""
         if platform.system() == "Windows":
             try:
                 import ctypes
@@ -1591,6 +1723,17 @@ class HardwareDashboard(tk.Tk):
                     )
             except Exception:
                 pass
+        # Tk's virtual root covers the whole X11 desktop where the window
+        # manager exposes it, including monitor layouts wider than one screen.
+        try:
+            left = int(self.winfo_vrootx())
+            top = int(self.winfo_vrooty())
+            width = int(self.winfo_vrootwidth())
+            height = int(self.winfo_vrootheight())
+            if width > 0 and height > 0:
+                return (left, top, left + width, top + height)
+        except tk.TclError:
+            pass
         return (0, 0, self.winfo_screenwidth(), self.winfo_screenheight())
 
     def run_tests(self) -> None:

@@ -35,16 +35,16 @@ def print_dashboard() -> None:
     print(f"Processor        : {info.processor}")
     print(f"CPU topology     : {core_text}")
     print(f"CPU usage        : {show(info.cpu_usage_percent, '%')}")
-    print(f"Installed memory : {show(info.memory_installed_gib, ' GiB')}")
+    print(f"Reported memory  : {show(info.memory_installed_gib, ' GiB')}")
     print(f"Usable memory    : {show(info.memory_total_gib, ' GiB')}")
     print(f"Memory in use    : {show(info.memory_used_gib, ' GiB')} ({show(info.memory_used_percent, '%')})")
-    print(f"System drive     : {info.system_drive}")
-    print(f"Drive capacity   : {info.disk_total_gib} GiB")
-    print(f"Drive free       : {info.disk_free_gib} GiB")
-    print(f"Drive used       : {info.disk_used_percent}%")
+    print(f"System volume    : {info.system_drive}")
+    print(f"Volume capacity  : {info.disk_total_gib} GiB")
+    print(f"Volume free      : {info.disk_free_gib} GiB")
+    print(f"Volume used      : {info.disk_used_percent}%")
     print(f"Battery / power  : {power}")
     print("Temperatures     : Not available without a hardware sensor provider")
-    print("\nCONNECTED NETWORK ADAPTERS")
+    print("\nCONNECTED PHYSICAL NETWORK ADAPTERS")
     print("-" * 58)
     if not info.network_interfaces:
         print("No connected physical network adapters detected")
@@ -57,13 +57,15 @@ def print_dashboard() -> None:
             else f"{receive_link} receive / {transmit_link} transmit"
         )
         print(f"  Link speed     : {link_speed}")
-        print(f"  Windows totals : {format_bytes(adapter.received_bytes)} received / "
+        print(f"  System totals  : {format_bytes(adapter.received_bytes)} received / "
               f"{format_bytes(adapter.sent_bytes)} sent")
     print("\nMade by Kieranmcm07 - https://github.com/Kieranmcm07")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect and safely test this PC's hardware.")
+    parser = argparse.ArgumentParser(
+        description="Inspect and safely test this computer's hardware."
+    )
     parser.add_argument("--test", action="store_true", help="run quick CPU and file-integrity checks")
     parser.add_argument("--json", action="store_true", help="output a snapshot as JSON")
     args = parser.parse_args()

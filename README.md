@@ -1,84 +1,150 @@
 # NEXUS Hardware Monitor
 
-A live Windows PC dashboard made by [Kieranmcm07](https://github.com/Kieranmcm07).
+A live Windows and Linux hardware dashboard made by
+[Kieranmcm07](https://github.com/Kieranmcm07).
 
-## New in v3.2
+## New in v3.3
 
-- A live **Network** tab shows download/upload rates, session totals and peaks,
-  auto-scaled 60-second graphs, and a card for every connected physical adapter
-- Network adapter cards show the Windows adapter name, connection type, current
-  link speed, and separate receive/transmit activity
-- Session CSV exports now include the live network rate and session byte totals
-- The **Storage** tab scrolls when a PC has several fixed drives, so C:, D:, and
-  any additional fixed drives remain accessible in windowed and fullscreen layouts
-- More robust live sampling: stale frames are discarded, sensor errors change
-  the LIVE indicator, pauses no longer count toward session duration, and missing
-  graph readings are displayed as gaps
+- First-class Linux support using information exposed by `/proc`, `/sys`, and
+  the local operating system
+- Cross-platform CPU, memory, storage, uptime, battery, and network telemetry
+  without a third-party Python package
+- Linux physical network adapters use the same live rate graphs, peaks, session totals,
+  and per-adapter cards as Windows
+- Storage cards support Windows drive letters and Linux mount points
+- The Desktop HUD uses the virtual desktop reported by Tk outside Windows and
+  safely ignores optional window-manager hints that are unavailable
+- Platform-neutral dashboard and command-line labels accurately describe where
+  readings come from
+- Refreshed cyan-violet-green palette with rounded metric tiles, graph surfaces,
+  clearer accents, and more readable long Linux mount paths
 
 ## Dashboard features
 
-- Animated neon gauges, live status pulse, scan line, clock, and telemetry banner
+- Animated neon gauges, a live status pulse, scan line, clock, and telemetry banner
+- A live **Network** tab with download/upload rates, session totals and peaks,
+  auto-scaled 60-second graphs, and connected-adapter details
 - **Session Insights** records one sample per second with average/peak statistics,
   explicit threshold events, pause/reset controls, and CSV export
-- **Desktop HUD** is a draggable, always-on-top overlay with CPU/RAM sparklines,
+- A draggable, always-on-top **Desktop HUD** with CPU/RAM sparklines,
   adjustable opacity, top-right snapping, and a visible restore button
-- Responsive fullscreen Overview: metadata stays compact while extra room becomes
-  useful live CPU/RAM history instead of stretched empty cards
-- Dynamic **Storage** tab showing every fixed drive (C:, D:, E:, and others) with
-  individual free/total capacity bars and clearly documented warning thresholds
-- Pausable performance graphs with honest straight-line samples
+- A responsive Overview and a scrollable **Storage** tab for multiple volumes
+- Pausable performance graphs that show missing readings as gaps
+- Built-in CPU-calculation and temporary-file integrity checks
 
-Session alerts are simple documented thresholds - not a hardware-health diagnosis:
-CPU or RAM at 85%+, and capacity at 90%+ on any detected fixed drive.
+Session alerts are documented information thresholds, not a hardware-health
+diagnosis: CPU or RAM at 85%+, and storage capacity at 90%+ on any detected
+volume.
 
 CSV export retains the latest 86,400 recorded samples (about 24 hours at the
-normal refresh rate). The on-screen session totals continue for the full session
-even after older export rows roll off.
+normal refresh rate). On-screen totals continue for the full session after older
+export rows roll off.
 
-## Start the GUI
+## Requirements
 
-Double-click `run_hardware_monitor.bat`, or run:
+- Python 3.10 or newer
+- Tkinter and a graphical desktop for the GUI
+- Windows 10/11 or a modern Linux distribution
+
+Tkinter is normally included with the Windows Python installer. On
+Debian/Ubuntu Linux, install it if needed:
+
+```bash
+sudo apt update
+sudo apt install python3-tk
+```
+
+The command-line snapshot and self-test can still run without opening the GUI.
+
+## Start on Windows
+
+Double-click `run_hardware_monitor.bat`, or use PowerShell:
 
 ```powershell
 cd "C:\Users\kiera\Documents\Scripts\Python Files\Hardware Monitor"
-pythonw -m hardware_monitor.gui
+python -m hardware_monitor.gui
+```
+
+`pythonw -m hardware_monitor.gui` also starts it without keeping a console window
+open.
+
+## Start on Linux
+
+From the project directory, run:
+
+```bash
+python3 -m hardware_monitor.gui
+```
+
+Or make the included launcher executable once and use it afterward:
+
+```bash
+chmod +x run_hardware_monitor.sh
+./run_hardware_monitor.sh
 ```
 
 Use **COMPACT MODE** to enter the Desktop HUD. Drag its title to move it, choose
-70/85/100 opacity, click **RESTORE** (or press Escape) to return to the full
+70/85/100 opacity, then click **RESTORE** or press Escape to return to the full
 dashboard.
 
-The dashboard reports Windows-provided CPU, graphics, memory, motherboard,
-BIOS, drive, battery, network, and operating-system information. Capacity is
-displayed in GiB (1 GiB = 1,073,741,824 bytes). Temperature, voltage, power, and
-fan RPM are deliberately shown as unavailable unless a trusted hardware sensor
-provider is added; Windows does not expose those readings reliably on every PC.
+## Understanding the readings
 
-### Understanding the network readings
+Capacity is displayed in GiB (1 GiB = 1,073,741,824 bytes). Windows uses native
+system APIs and the registry where appropriate. Linux reads standard kernel and
+system files, including `/proc` and `/sys`. A field displays as unavailable when
+the operating system does not expose it or the current user cannot read it.
 
-NEXUS reads the 64-bit byte counters Windows maintains for each connected
-physical adapter, then calculates rates from the change between one-second
-samples. It does not inspect packets or send data anywhere.
+NEXUS reads the operating system's 64-bit byte counters for each connected
+physical adapter and calculates rates from the change between samples. It does
+not inspect packets or send data anywhere. Virtual-only interfaces such as TUN,
+TAP, bridges, and container links are intentionally excluded to avoid counting
+the same transfer twice.
 
-- **Link speed** is the adapter's negotiated connection to the router, switch, or
-  access point. It is not an internet speed test or a promised download speed.
-- Download/upload includes all traffic through the adapter, such as local-network
-  transfers, internet traffic, VPN overhead, Windows services, and other apps.
-- Very short bursts between refreshes are averaged into the next reading. An
-  adapter reconnect or Windows counter reset starts a fresh baseline instead of
-  reporting a false spike.
-- Session totals begin after NEXUS receives its first sample; they are not the
-  machine's lifetime usage totals.
+- **Link speed** is the adapter's connection to a router, switch, or access point;
+  it is not an internet speed test or a promised download speed.
+- Download/upload includes local-network transfers, internet traffic, VPN
+  overhead on the underlying physical link, background services, and other apps
+  using the adapter.
+- Short bursts between refreshes are averaged into the next reading. Reconnects
+  and counter resets start a fresh baseline instead of producing a false spike.
+- Session totals begin with the first NEXUS sample; they are not lifetime totals.
 
 The quick check verifies CPU calculation and temporary-file integrity. Its small,
 cache-affected throughput figure is not a full physical-drive benchmark.
 
-## Command line
+## Compatibility and limitations
+
+- Windows and Linux are the supported platforms. macOS and other
+  systems may launch through generic fallbacks, but they are not officially
+  supported yet and more readings may be unavailable.
+- GPU, motherboard, BIOS, physical-memory, battery, and link-speed details depend
+  on what the operating system and hardware expose. Linux permissions, virtual
+  machines, containers, and WSL can reduce the available details. Under WSL,
+  readings describe the Linux environment rather than the full Windows host.
+- Temperature, voltage, power, and fan RPM stay unavailable until a trusted
+  cross-platform sensor provider is added.
+- Always-on-top, opacity, borderless mode, and exact multi-monitor HUD placement
+  are window-manager features. Results can vary between X11, Wayland, and Linux
+  desktop environments, but the full dashboard remains usable.
+- A Linux GUI session needs a working display (`DISPLAY` or the desktop's Wayland
+  bridge). Headless servers can use the command-line modes below.
+
+## Command line and tests
+
+Windows:
 
 ```powershell
 python -m hardware_monitor.main
 python -m hardware_monitor.main --test
 python -m hardware_monitor.main --json
 python -m unittest discover -v
-python -m unittest discover -s tests -v
+```
+
+Linux:
+
+```bash
+python3 -m hardware_monitor.main
+python3 -m hardware_monitor.main --test
+python3 -m hardware_monitor.main --json
+python3 -m unittest discover -v
 ```
