@@ -1,3 +1,6 @@
+#   Made by Kieranmcm07 on GitHub
+#   GitHub: https://github.com/Kieranmcm07
+
 #!/usr/bin/env sh
 set -eu
 

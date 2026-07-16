@@ -1,3 +1,6 @@
+#   Made by Kieranmcm07 on GitHub
+#   GitHub: https://github.com/Kieranmcm07
+
 import unittest
 
 from hardware_monitor.gui import compact_volume_name, mix_color

@@ -1,4 +1,5 @@
-"""NEXUS Hardware Monitor, made by Kieranmcm07."""
+#   Made by Kieranmcm07 on GitHub
+#   GitHub: https://github.com/Kieranmcm07
 
 __author__ = "Kieranmcm07"
 __version__ = "3.4.0"

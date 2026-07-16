@@ -1,1 +1,2 @@
-"""Automated tests for NEXUS Hardware Monitor."""
+#   Made by Kieranmcm07 on GitHub
+#   GitHub: https://github.com/Kieranmcm07
