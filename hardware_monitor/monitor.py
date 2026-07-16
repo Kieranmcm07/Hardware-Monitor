@@ -30,6 +30,19 @@ class DriveInfo:
 
 
 @dataclass(frozen=True)
+class NetworkInterfaceInfo:
+    luid: int
+    index: int
+    alias: str
+    description: str
+    kind: str
+    receive_link_bps: int
+    transmit_link_bps: int
+    received_bytes: int
+    sent_bytes: int
+
+
+@dataclass(frozen=True)
 class HardwareInfo:
     cpu_name: str
     physical_cores: int | None
@@ -63,7 +76,9 @@ class Snapshot:
     plugged_in: bool | None
     uptime_seconds: float | None
     captured_at: float
+    monotonic_at: float
     drives: tuple[DriveInfo, ...]
+    network_interfaces: tuple[NetworkInterfaceInfo, ...]
 
     # Compatibility with the original CLI/tests.
     @property
@@ -76,6 +91,65 @@ class Snapshot:
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+class _Guid(ctypes.Structure):
+    _fields_ = [
+        ("data1", ctypes.c_ulong),
+        ("data2", ctypes.c_ushort),
+        ("data3", ctypes.c_ushort),
+        ("data4", ctypes.c_ubyte * 8),
+    ]
+
+
+class _MibIfRow2(ctypes.Structure):
+    _fields_ = [
+        ("interface_luid", ctypes.c_ulonglong),
+        ("interface_index", ctypes.c_ulong),
+        ("interface_guid", _Guid),
+        ("alias", ctypes.c_wchar * 257),
+        ("description", ctypes.c_wchar * 257),
+        ("physical_address_length", ctypes.c_ulong),
+        ("physical_address", ctypes.c_ubyte * 32),
+        ("permanent_physical_address", ctypes.c_ubyte * 32),
+        ("mtu", ctypes.c_ulong),
+        ("type", ctypes.c_ulong),
+        ("tunnel_type", ctypes.c_ulong),
+        ("media_type", ctypes.c_ulong),
+        ("physical_medium_type", ctypes.c_ulong),
+        ("access_type", ctypes.c_ulong),
+        ("direction_type", ctypes.c_ulong),
+        ("interface_flags", ctypes.c_ubyte),
+        ("operational_status", ctypes.c_ulong),
+        ("admin_status", ctypes.c_ulong),
+        ("media_connect_state", ctypes.c_ulong),
+        ("network_guid", _Guid),
+        ("connection_type", ctypes.c_ulong),
+        ("transmit_link_speed", ctypes.c_ulonglong),
+        ("receive_link_speed", ctypes.c_ulonglong),
+        ("in_octets", ctypes.c_ulonglong),
+        ("in_unicast_packets", ctypes.c_ulonglong),
+        ("in_non_unicast_packets", ctypes.c_ulonglong),
+        ("in_discards", ctypes.c_ulonglong),
+        ("in_errors", ctypes.c_ulonglong),
+        ("in_unknown_protocols", ctypes.c_ulonglong),
+        ("in_unicast_octets", ctypes.c_ulonglong),
+        ("in_multicast_octets", ctypes.c_ulonglong),
+        ("in_broadcast_octets", ctypes.c_ulonglong),
+        ("out_octets", ctypes.c_ulonglong),
+        ("out_unicast_packets", ctypes.c_ulonglong),
+        ("out_non_unicast_packets", ctypes.c_ulonglong),
+        ("out_discards", ctypes.c_ulonglong),
+        ("out_errors", ctypes.c_ulonglong),
+        ("out_unicast_octets", ctypes.c_ulonglong),
+        ("out_multicast_octets", ctypes.c_ulonglong),
+        ("out_broadcast_octets", ctypes.c_ulonglong),
+        ("out_queue_length", ctypes.c_ulonglong),
+    ]
+
+
+class _MibIfTable2(ctypes.Structure):
+    _fields_ = [("num_entries", ctypes.c_ulong), ("table", _MibIfRow2 * 1)]
 
 
 def _registry_value(path: str, name: str) -> object | None:
@@ -272,6 +346,66 @@ def battery_info() -> tuple[int | None, bool | None]:
     return percent, plugged
 
 
+def _network_interface_from_row(row: _MibIfRow2) -> NetworkInterfaceInfo | None:
+    """Convert one native row, excluding pseudo and disconnected interfaces."""
+    is_hardware = bool(row.interface_flags & 0x01)
+    is_filter = bool(row.interface_flags & 0x02)
+    is_endpoint = bool(row.interface_flags & 0x80)
+    is_connected = row.operational_status == 1 and row.media_connect_state == 1
+    if not is_hardware or is_filter or is_endpoint or not is_connected:
+        return None
+    if row.type == 24:  # software loopback
+        return None
+    kind = {
+        6: "Ethernet",
+        71: "Wi-Fi",
+        243: "Mobile broadband",
+        244: "Mobile broadband",
+    }.get(int(row.type), "Network")
+    return NetworkInterfaceInfo(
+        luid=int(row.interface_luid),
+        index=int(row.interface_index),
+        alias=row.alias.strip("\x00 ") or f"Interface {row.interface_index}",
+        description=row.description.strip("\x00 ") or "Windows network adapter",
+        kind=kind,
+        receive_link_bps=int(row.receive_link_speed),
+        transmit_link_bps=int(row.transmit_link_speed),
+        received_bytes=int(row.in_octets),
+        sent_bytes=int(row.out_octets),
+    )
+
+
+def _network_interfaces_from_table(table_address: int) -> tuple[NetworkInterfaceInfo, ...]:
+    """Parse a GetIfTable2 allocation while preserving its 64-bit counters."""
+    interfaces: list[NetworkInterfaceInfo] = []
+    count = ctypes.c_ulong.from_address(table_address).value
+    row_offset = _MibIfTable2.table.offset
+    row_size = ctypes.sizeof(_MibIfRow2)
+    for position in range(count):
+        row = _MibIfRow2.from_address(table_address + row_offset + position * row_size)
+        interface = _network_interface_from_row(row)
+        if interface is not None:
+            interfaces.append(interface)
+    return tuple(sorted(interfaces, key=lambda interface: (interface.kind, interface.alias)))
+
+
+def network_interfaces() -> tuple[NetworkInterfaceInfo, ...]:
+    """Return connected physical adapters using Windows' 64-bit IP Helper counters."""
+    if os.name != "nt":
+        return ()
+    iphlpapi = ctypes.windll.iphlpapi
+    iphlpapi.GetIfTable2.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    iphlpapi.GetIfTable2.restype = ctypes.c_ulong
+    iphlpapi.FreeMibTable.argtypes = [ctypes.c_void_p]
+    table_pointer = ctypes.c_void_p()
+    if iphlpapi.GetIfTable2(ctypes.byref(table_pointer)) != 0 or not table_pointer.value:
+        return ()
+    try:
+        return _network_interfaces_from_table(table_pointer.value)
+    finally:
+        iphlpapi.FreeMibTable(table_pointer)
+
+
 def _drive_info() -> tuple[DriveInfo, ...]:
     roots: list[str] = []
     if os.name == "nt":
@@ -341,6 +475,9 @@ def take_snapshot(disk_path: str | Path | None = None) -> Snapshot:
         disk_used_percent = system_volume.used_percent
     total_mem, used_mem, available_mem, memory_percent = memory_info()
     battery, plugged = battery_info()
+    interfaces = network_interfaces()
+    captured_at = time.time()
+    monotonic_at = time.monotonic()
     return Snapshot(
         computer=platform.node() or "Unknown",
         operating_system=_os_name(),
@@ -360,8 +497,10 @@ def take_snapshot(disk_path: str | Path | None = None) -> Snapshot:
         battery_percent=battery,
         plugged_in=plugged,
         uptime_seconds=_uptime_seconds(),
-        captured_at=time.time(),
+        captured_at=captured_at,
+        monotonic_at=monotonic_at,
         drives=drives,
+        network_interfaces=interfaces,
     )
 
 
