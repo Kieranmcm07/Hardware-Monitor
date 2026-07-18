@@ -24,7 +24,7 @@ It runs on **Windows and Linux**, uses the information your operating system alr
 - Run built-in CPU calculation, temporary-file integrity, and unit tests
 
 > [!NOTE]
-> NEXUS reads system counters—it does not inspect packets, upload telemetry, or send your hardware data anywhere.
+> NEXUS reads system counters-it does not inspect packets, upload telemetry, or send your hardware data anywhere.
 
 ## Run it
 
