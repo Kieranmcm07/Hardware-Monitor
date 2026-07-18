@@ -1,165 +1,162 @@
-# NEXUS Hardware Monitor
+<p align="center">
+  <img src="assets/nexus-banner.svg" alt="NEXUS Hardware Monitor" width="100%">
+</p>
 
-A live Windows and Linux hardware dashboard made by
-[Kieranmcm07](https://github.com/Kieranmcm07).
+<p align="center">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-151719?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="Windows and Linux" src="https://img.shields.io/badge/Windows%20%2F%20Linux-supported-151719?style=for-the-badge">
+  <img alt="No third-party dependencies" src="https://img.shields.io/badge/third--party%20packages-none-c92d45?style=for-the-badge">
+</p>
 
-## New in v3.4
+NEXUS is a live hardware dashboard I built for checking the stuff I actually care about without opening five different apps. CPU, memory, storage, battery, network traffic, and session stats are all in one place, with a compact desktop HUD when you only want the essentials.
 
-- New graphite black-and-white interface with restrained red focus and alert accents
-- True Canvas-drawn rounded tabs, buttons, main panels, drive cards, adapter cards,
-  gauges, graphs, metric tiles, and Desktop HUD cells
-- Stronger two- and three-pixel visual hierarchy for borders, gauges, graphs,
-  progress tracks, selected tabs, and keyboard focus
-- Runtime font selection uses modern Windows fonts when installed and portable
-  Inter, Noto Sans, DejaVu Sans, and DejaVu Sans Mono fallbacks on Linux
-- A single capped animation clock drives graph sweeps, gauge and sparkline halos,
-  live-status ripples, metric update pulses, and the red header scanner
-- Smooth drive-capacity transitions and animated rounded-button hover, press,
-  keyboard-focus, and selected-tab states
-- Ambient animation pauses for hidden tabs and minimized windows so the monitor
-  does not add unnecessary load to the computer it is measuring
+It runs on **Windows and Linux**, uses the information your operating system already exposes, and does not need any third-party Python packages.
 
-## Added in v3.3
+## What it can do
 
-- First-class Linux support using information exposed by `/proc`, `/sys`, and
-  the local operating system
-- Cross-platform CPU, memory, storage, uptime, battery, and network telemetry
-  without a third-party Python package
-- Linux physical network adapters use the same live rate graphs, peaks, session totals,
-  and per-adapter cards as Windows
-- Storage cards support Windows drive letters and Linux mount points
-- The Desktop HUD uses the virtual desktop reported by Tk outside Windows and
-  safely ignores optional window-manager hints that are unavailable
-- Platform-neutral dashboard and command-line labels accurately describe where
-  readings come from
-- Responsive metric tiles, graph surfaces, and readable long Linux mount paths
+- Show live CPU, RAM, storage, battery, uptime, and system information
+- Track download/upload speeds, session totals, peaks, and connected physical adapters
+- Draw auto-scaling 60-second graphs for system and network activity
+- Record one sample per second in **Session Insights**, with pause/reset controls and CSV export
+- Switch into a draggable, always-on-top **Desktop HUD** with CPU and RAM sparklines
+- Display multiple Windows drives or Linux mount points in a scrollable storage view
+- Output a readable command-line snapshot or raw JSON
+- Run built-in CPU calculation, temporary-file integrity, and unit tests
 
-## Dashboard features
+> [!NOTE]
+> NEXUS reads system counters—it does not inspect packets, upload telemetry, or send your hardware data anywhere.
 
-- Animated gauges, live-status ripple, red scanner, clock, and telemetry banner
-- A live **Network** tab with download/upload rates, session totals and peaks,
-  auto-scaled 60-second graphs, and connected-adapter details
-- **Session Insights** records one sample per second with average/peak statistics,
-  explicit threshold events, pause/reset controls, and CSV export
-- A draggable, always-on-top **Desktop HUD** with CPU/RAM sparklines,
-  adjustable opacity, top-right snapping, and a visible restore button
-- A responsive Overview and a scrollable **Storage** tab for multiple volumes
-- Pausable performance graphs that show missing readings as gaps
-- Built-in CPU-calculation and temporary-file integrity checks
+## Run it
 
-Session alerts are documented information thresholds, not a hardware-health
-diagnosis: CPU or RAM at 85%+, and storage capacity at 90%+ on any detected
-volume.
+### Windows
 
-CSV export retains the latest 86,400 recorded samples (about 24 hours at the
-normal refresh rate). On-screen totals continue for the full session after older
-export rows roll off.
+The easiest way is to double-click:
 
-## Requirements
-
-- Python 3.10 or newer
-- Tkinter and a graphical desktop for the GUI
-- Windows 10/11 or a modern Linux distribution
-
-Tkinter is normally included with the Windows Python installer. On
-Debian/Ubuntu Linux, install it if needed:
-
-```bash
-sudo apt update
-sudo apt install python3-tk
+```text
+run_hardware_monitor.bat
 ```
 
-The command-line snapshot and self-test can still run without opening the GUI.
-
-## Start on Windows
-
-Double-click `run_hardware_monitor.bat`, or use PowerShell:
+Or launch it from PowerShell inside the project folder:
 
 ```powershell
-cd "C:\Users\kiera\Documents\Scripts\Python Files\Hardware Monitor"
 python -m hardware_monitor.gui
 ```
 
-`pythonw -m hardware_monitor.gui` also starts it without keeping a console window
-open.
+You can also use `pythonw -m hardware_monitor.gui` if you do not want a console window left open behind it.
 
-## Start on Linux
+### Linux
 
-From the project directory, run:
+Make sure Tkinter is installed, then run:
 
 ```bash
 python3 -m hardware_monitor.gui
 ```
 
-Or make the included launcher executable once and use it afterward:
+The included launcher works too:
 
 ```bash
 chmod +x run_hardware_monitor.sh
 ./run_hardware_monitor.sh
 ```
 
-Use **COMPACT MODE** to enter the Desktop HUD. Drag its title to move it, choose
-70/85/100 opacity, then click **RESTORE** or press Escape to return to the full
-dashboard.
+On Debian or Ubuntu, install Tkinter with:
 
-## Understanding the readings
+```bash
+sudo apt update
+sudo apt install python3-tk
+```
 
-Capacity is displayed in GiB (1 GiB = 1,073,741,824 bytes). Windows uses native
-system APIs and the registry where appropriate. Linux reads standard kernel and
-system files, including `/proc` and `/sys`. A field displays as unavailable when
-the operating system does not expose it or the current user cannot read it.
+## Compact HUD
 
-NEXUS reads the operating system's 64-bit byte counters for each connected
-physical adapter and calculates rates from the change between samples. It does
-not inspect packets or send data anywhere. Virtual-only interfaces such as TUN,
-TAP, bridges, and container links are intentionally excluded to avoid counting
-the same transfer twice.
+Click **COMPACT MODE** to switch from the full dashboard to the desktop HUD.
 
-- **Link speed** is the adapter's connection to a router, switch, or access point;
-  it is not an internet speed test or a promised download speed.
-- Download/upload includes local-network transfers, internet traffic, VPN
-  overhead on the underlying physical link, background services, and other apps
-  using the adapter.
-- Short bursts between refreshes are averaged into the next reading. Reconnects
-  and counter resets start a fresh baseline instead of producing a false spike.
-- Session totals begin with the first NEXUS sample; they are not lifetime totals.
+You can drag it by the title, change the opacity between 70%, 85%, and 100%, and snap it to the top-right of your desktop. Click **RESTORE** or press `Esc` to go back to the main window.
 
-The quick check verifies CPU calculation and temporary-file integrity. Its small,
-cache-affected throughput figure is not a full physical-drive benchmark.
+## Command line
 
-## Compatibility and limitations
+A full GUI is not required for the snapshot, JSON output, or quick self-test.
 
-- Windows and Linux are the supported platforms. macOS and other
-  systems may launch through generic fallbacks, but they are not officially
-  supported yet and more readings may be unavailable.
-- GPU, motherboard, BIOS, physical-memory, battery, and link-speed details depend
-  on what the operating system and hardware expose. Linux permissions, virtual
-  machines, containers, and WSL can reduce the available details. Under WSL,
-  readings describe the Linux environment rather than the full Windows host.
-- Temperature, voltage, power, and fan RPM stay unavailable until a trusted
-  cross-platform sensor provider is added.
-- Always-on-top, opacity, borderless mode, and exact multi-monitor HUD placement
-  are window-manager features. Results can vary between X11, Wayland, and Linux
-  desktop environments, but the full dashboard remains usable.
-- A Linux GUI session needs a working display (`DISPLAY` or the desktop's Wayland
-  bridge). Headless servers can use the command-line modes below.
-
-## Command line and tests
-
-Windows:
-
-```powershell
+```bash
+# Human-readable system snapshot
 python -m hardware_monitor.main
-python -m hardware_monitor.main --test
+
+# Raw JSON snapshot
 python -m hardware_monitor.main --json
+
+# CPU and temporary-file checks
+python -m hardware_monitor.main --test
+```
+
+Use `python3` instead of `python` on Linux if that is how Python is installed on your system.
+
+## Tests
+
+```bash
 python -m unittest discover -v
 ```
 
-Linux:
+The test suite covers the platform parsers, CPU and disk checks, network rate tracking, counter resets, session recording, alert thresholds, retention limits, CSV export, and GUI helper functions.
 
-```bash
-python3 -m hardware_monitor.main
-python3 -m hardware_monitor.main --test
-python3 -m hardware_monitor.main --json
-python3 -m unittest discover -v
+## How the readings work
+
+Windows readings come from native system APIs and the registry where needed. Linux readings come from standard sources such as `/proc`, `/sys`, mounted filesystems, and local system commands.
+
+Network speeds are calculated from the change in each physical adapter's 64-bit byte counters between samples. Virtual-only interfaces such as TUN/TAP devices, bridges, and container links are skipped so the same traffic is not counted twice.
+
+A few things worth knowing:
+
+- **Link speed is not an internet speed test.** It is the adapter's connection speed to your router, switch, or access point.
+- Network totals include local traffic, internet traffic, background apps, and VPN overhead on the physical connection.
+- Reconnects and counter resets start a new baseline instead of creating a fake spike.
+- Session totals start when NEXUS starts; they are not lifetime totals.
+- Storage is shown in GiB, where 1 GiB is 1,073,741,824 bytes.
+
+## Session Insights
+
+NEXUS keeps the latest **86,400 samples** for CSV export, which is roughly 24 hours at the normal one-second refresh rate. The on-screen averages, peaks, and totals continue for the whole session even after older export rows roll off.
+
+The built-in alerts use simple information thresholds:
+
+- CPU at 85% or higher
+- RAM at 85% or higher
+- Any detected storage volume at 90% capacity or higher
+
+These alerts are a heads-up, not a hardware-health diagnosis.
+
+## Latest update — v3.4
+
+The current release focuses on making the interface feel smoother without making the monitor itself heavy:
+
+- Reworked graphite black-and-white design with restrained red accents
+- Canvas-drawn rounded panels, tabs, buttons, gauges, graphs, cards, and HUD cells
+- Smoother drive-capacity, hover, press, focus, gauge, graph, and sparkline animations
+- Better font fallbacks across Windows and Linux
+- One capped animation clock instead of lots of separate animation loops
+- Background animation pauses when tabs are hidden or the window is minimized
+
+Linux support added in v3.3 includes native CPU, memory, storage, uptime, battery, and physical network-adapter readings using `/proc`, `/sys`, and other local operating-system sources.
+
+## Compatibility
+
+**Officially supported:** Windows 10/11 and modern Linux distributions with Python 3.10+.
+
+macOS and other systems may open through generic fallbacks, but they are not officially supported and some readings will be unavailable. Hardware details also depend on what the operating system, permissions, firmware, and drivers expose.
+
+Temperature, voltage, power draw, and fan RPM are not currently shown because NEXUS does not yet use a trusted cross-platform sensor provider. Window opacity, borderless mode, always-on-top behaviour, and exact multi-monitor placement can also vary between Linux desktop environments, X11, and Wayland.
+
+## Project layout
+
+```text
+hardware_monitor/
+├── gui.py        # Main dashboard and Desktop HUD
+├── main.py       # CLI snapshot, JSON output, and self-test entry point
+├── monitor.py    # Cross-platform hardware and OS data collection
+├── network.py    # Adapter rate tracking, totals, peaks, and formatting
+└── recorder.py   # Session samples, summaries, alerts, and CSV export
+
+tests/            # Unit tests for monitoring, networking, recording, and GUI helpers
 ```
+
+---
+
+Made by [Kieranmcm07](https://github.com/Kieranmcm07). If NEXUS is useful to you, leaving the repo a star would be appreciated.

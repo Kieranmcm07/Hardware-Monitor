@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="520" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
+  <title id="title">NEXUS Hardware Monitor</title>
+  <desc id="desc">Dark graphite banner with red telemetry accents, hardware metrics, and a live waveform.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070809"/>
+      <stop offset="0.55" stop-color="#111315"/>
+      <stop offset="1" stop-color="#08090a"/>
+    </linearGradient>
+    <linearGradient id="redGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff334d" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ff334d" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ff334d" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="waveFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff334d" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ff334d" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="520" rx="28" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1598" height="518" rx="27" fill="none" stroke="#ffffff" stroke-opacity="0.13" stroke-width="2"/>
+  <rect width="1600" height="520" rx="28" fill="url(#grid)"/>
+
+  <circle cx="1290" cy="88" r="260" fill="#ff2945" opacity="0.045"/>
+  <circle cx="1510" cy="360" r="230" fill="#ff2945" opacity="0.035"/>
+  <path d="M0 86 H1600" stroke="url(#redGlow)" stroke-width="2"/>
+
+  <g transform="translate(90 95)">
+    <rect x="0" y="0" width="154" height="34" rx="17" fill="#ff334d" fill-opacity="0.12" stroke="#ff334d" stroke-opacity="0.65"/>
+    <circle cx="20" cy="17" r="5" fill="#ff334d" filter="url(#softGlow)"/>
+    <text x="34" y="22" fill="#ff9aa8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="2">SYSTEM LIVE</text>
+
+    <text x="0" y="122" fill="#f5f5f5" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="92" font-weight="800" letter-spacing="8">NEXUS</text>
+    <text x="4" y="168" fill="#a9adb2" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="600" letter-spacing="8">HARDWARE MONITOR</text>
+    <text x="4" y="217" fill="#72777e" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" letter-spacing="1.6">CPU · MEMORY · STORAGE · NETWORK · SESSION INSIGHTS</text>
+
+    <g transform="translate(4 270)">
+      <rect x="0" y="0" width="174" height="72" rx="14" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="18" y="27" fill="#777d84" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">PLATFORMS</text>
+      <text x="18" y="52" fill="#e8e8e8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Windows / Linux</text>
+
+      <rect x="190" y="0" width="174" height="72" rx="14" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="208" y="27" fill="#777d84" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">RUNTIME</text>
+      <text x="208" y="52" fill="#e8e8e8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Python 3.10+</text>
+
+      <rect x="380" y="0" width="214" height="72" rx="14" fill="#ff334d" fill-opacity="0.08" stroke="#ff334d" stroke-opacity="0.36"/>
+      <text x="398" y="27" fill="#a46b73" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">DEPENDENCIES</text>
+      <text x="398" y="52" fill="#ffb2bd" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">No third-party packages</text>
+    </g>
+  </g>
+
+  <g transform="translate(900 105)">
+    <rect x="0" y="0" width="610" height="326" rx="22" fill="#090a0c" fill-opacity="0.88" stroke="#ffffff" stroke-opacity="0.13" stroke-width="2"/>
+    <rect x="24" y="22" width="562" height="44" rx="12" fill="#ffffff" fill-opacity="0.035"/>
+    <circle cx="46" cy="44" r="5" fill="#ff334d"/>
+    <text x="62" y="50" fill="#d8dadd" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="2">LIVE TELEMETRY</text>
+    <text x="535" y="50" fill="#656a71" font-family="JetBrains Mono, Consolas, monospace" font-size="13">00:01:24</text>
+
+    <g transform="translate(24 88)">
+      <rect width="166" height="88" rx="14" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="16" y="25" fill="#757a81" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">CPU</text>
+      <text x="16" y="62" fill="#f2f2f2" font-family="JetBrains Mono, Consolas, monospace" font-size="30" font-weight="700">38%</text>
+      <path d="M92 64 L103 51 L114 57 L126 35 L138 45 L150 24" fill="none" stroke="#ff334d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+      <rect x="182" width="166" height="88" rx="14" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="198" y="25" fill="#757a81" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">RAM</text>
+      <text x="198" y="62" fill="#f2f2f2" font-family="JetBrains Mono, Consolas, monospace" font-size="30" font-weight="700">61%</text>
+      <rect x="273" y="33" width="55" height="8" rx="4" fill="#25282c"/>
+      <rect x="273" y="33" width="34" height="8" rx="4" fill="#ff334d"/>
+      <rect x="273" y="50" width="55" height="8" rx="4" fill="#25282c"/>
+      <rect x="273" y="50" width="45" height="8" rx="4" fill="#f1f1f1" opacity="0.65"/>
+
+      <rect x="364" width="198" height="88" rx="14" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.09"/>
+      <text x="380" y="25" fill="#757a81" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2">NETWORK</text>
+      <text x="380" y="57" fill="#f2f2f2" font-family="JetBrains Mono, Consolas, monospace" font-size="22" font-weight="700">84.2 MB/s</text>
+      <text x="380" y="75" fill="#ff7b8d" font-family="JetBrains Mono, Consolas, monospace" font-size="11">↓ 84.2   ↑ 12.7</text>
+    </g>
+
+    <g transform="translate(24 196)">
+      <line x1="0" y1="92" x2="562" y2="92" stroke="#ffffff" stroke-opacity="0.08"/>
+      <line x1="0" y1="46" x2="562" y2="46" stroke="#ffffff" stroke-opacity="0.055"/>
+      <line x1="0" y1="0" x2="562" y2="0" stroke="#ffffff" stroke-opacity="0.055"/>
+      <path d="M0 78 C26 72, 33 55, 58 63 S96 84, 124 48 S166 23, 194 41 S231 73, 260 58 S295 12, 326 34 S372 71, 405 44 S445 22, 472 51 S528 76, 562 31 L562 94 L0 94 Z" fill="url(#waveFill)"/>
+      <path d="M0 78 C26 72, 33 55, 58 63 S96 84, 124 48 S166 23, 194 41 S231 73, 260 58 S295 12, 326 34 S372 71, 405 44 S445 22, 472 51 S528 76, 562 31" fill="none" stroke="#ff334d" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="562" cy="31" r="5" fill="#ff334d" filter="url(#softGlow)"/>
+    </g>
+  </g>
+
+  <text x="1510" y="474" text-anchor="end" fill="#4d5157" font-family="JetBrains Mono, Consolas, monospace" font-size="13" letter-spacing="2">v3.4.0</text>
+</svg>
