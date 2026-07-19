@@ -31,6 +31,16 @@ from hardware_monitor.network import (
     format_rate,
 )
 from hardware_monitor.recorder import SessionRecorder
+from hardware_monitor.alerts import AlertEngine, AlertRule, metrics_from_snapshot
+from hardware_monitor.control_center import FeatureHub, FeatureStatus
+from hardware_monitor.feature_windows import FeatureServices, FeatureWindowManager
+from hardware_monitor.history import HistoryStore
+from hardware_monitor.overlay import GamingOverlay
+from hardware_monitor.processes import ProcessTracker
+from hardware_monitor.sensors import SensorHub, SensorKind, default_sensor_providers
+from hardware_monitor.settings import AppSettings, SettingsStore
+from hardware_monitor.theme import SemanticTheme, resolve_theme
+from hardware_monitor.tray import TrayCommand, TrayController
 
 
 BG = "#030304"
@@ -56,6 +66,45 @@ FONT_DISPLAY = "Segoe UI"
 FONT_MONO = "Cascadia Mono"
 
 GITHUB_URL = "https://github.com/Kieranmcm07"
+
+
+def apply_theme_palette(theme: SemanticTheme) -> None:
+    """Apply one validated semantic palette to the legacy dashboard widgets."""
+    global BG, PANEL, CARD, CARD_2, BORDER, BORDER_STRONG, TEXT, MUTED
+    global CYAN, GREEN, PURPLE, ORANGE, RED, RED_DARK, TRACK, GRID, GRAPH_FILL
+    BG = theme.background
+    PANEL = theme.panel
+    CARD = theme.surface
+    CARD_2 = theme.surface_alt
+    BORDER = theme.border
+    BORDER_STRONG = theme.border_strong
+    TEXT = theme.text
+    MUTED = theme.muted
+    CYAN = theme.text
+    GREEN = theme.success
+    PURPLE = theme.accent_hover
+    ORANGE = theme.warning
+    RED = theme.accent
+    RED_DARK = theme.accent_dim
+    TRACK = theme.track
+    GRID = theme.grid
+    GRAPH_FILL = theme.graph_fill
+
+
+def alert_rules_from_settings(settings: AppSettings) -> tuple[AlertRule, ...]:
+    """Build the single threshold policy used by the dashboard and recorder."""
+    return (
+        AlertRule("cpu", "CPU load", settings.cpu_alert_percent, hold_seconds=4.0),
+        AlertRule("memory", "Memory use", settings.memory_alert_percent, hold_seconds=5.0),
+        AlertRule(
+            "storage", "Storage use", settings.storage_alert_percent,
+            hold_seconds=15.0, cooldown_seconds=300.0,
+        ),
+        AlertRule(
+            "temperature", "Temperature", settings.temperature_alert_c,
+            unit="°C", hold_seconds=3.0,
+        ),
+    )
 
 
 def value_text(value: float | None, suffix: str = "", decimals: int = 1) -> str:
@@ -369,11 +418,16 @@ class RoundedButton(tk.Canvas):
 
 
 class Gauge(tk.Canvas):
-    def __init__(self, parent, title: str, color: str, size: int = 145):
+    def __init__(
+        self, parent, title: str, color: str, size: int = 145,
+        high_threshold: float = 85.0,
+    ):
         super().__init__(parent, width=size, height=size, bg=CARD, highlightthickness=0)
         self.size = size
         self.title = title
         self.color = color
+        self.high_threshold = float(high_threshold)
+        self.warning_threshold = max(50.0, self.high_threshold - 20.0)
         self.value: float | None = None
         self.display_value = 0.0
         self._end_point: tuple[float, float] | None = None
@@ -385,6 +439,11 @@ class Gauge(tk.Canvas):
         if self.value is None:
             self.display_value = 0.0
             self.draw()
+
+    def set_threshold(self, high_threshold: float) -> None:
+        self.high_threshold = max(0.0, min(100.0, float(high_threshold)))
+        self.warning_threshold = max(0.0, self.high_threshold - 20.0)
+        self.draw()
 
     def draw(self) -> None:
         self.delete("all")
@@ -420,8 +479,16 @@ class Gauge(tk.Canvas):
                 fill=CARD_2, outline=self.color, width=2, tags="gauge_halo"
             )
             reading = f"{self.value:.0f}%"
-            state = "HIGH" if self.value >= 85 else "ELEVATED" if self.value >= 65 else "NORMAL"
-            state_color = RED if self.value >= 85 else ORANGE if self.value >= 65 else GREEN
+            state = (
+                "HIGH" if self.value >= self.high_threshold
+                else "ELEVATED" if self.value >= self.warning_threshold
+                else "NORMAL"
+            )
+            state_color = (
+                RED if self.value >= self.high_threshold
+                else ORANGE if self.value >= self.warning_threshold
+                else GREEN
+            )
         else:
             self._end_point = None
             reading = "N/A"
@@ -989,13 +1056,20 @@ class NetworkAdapterCard(RoundedPanel):
 
 class HardwareDashboard(tk.Tk):
     def __init__(self):
+        settings_store = SettingsStore()
+        settings = settings_store.load()
+        theme = resolve_theme("graphite", settings.accent)
+        apply_theme_palette(theme)
         super().__init__()
+        self.settings_store = settings_store
+        self.settings = settings
+        self.theme = theme
         configure_font_families(self)
         self.title("NEXUS - Hardware Monitor")
         self.geometry("1100x760")
         self.minsize(860, 640)
         self.configure(bg=BG)
-        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.protocol("WM_DELETE_WINDOW", self._on_window_close)
         # Telemetry is "latest value" data. Keeping one pending snapshot avoids
         # replaying an old backlog after a modal dialog or a busy resize.
         self.snapshot_queue: queue.Queue[object] = queue.Queue(maxsize=1)
@@ -1003,6 +1077,23 @@ class HardwareDashboard(tk.Tk):
         self.stop_event = threading.Event()
         self.session = SessionRecorder()
         self.network_tracker = NetworkRateTracker()
+        self.alert_engine = AlertEngine(alert_rules_from_settings(settings))
+        self.alerts_paused = not settings.alerts_enabled
+        self.alert_events: deque[object] = deque(maxlen=250)
+        self.history_store = HistoryStore(
+            retention_days=settings.history_days,
+            autostart=settings.history_enabled,
+        )
+        self.process_tracker = ProcessTracker()
+        self.sensor_hub = SensorHub(default_sensor_providers())
+        self.latest_processes = None
+        self.latest_sensor_snapshot = None
+        self.latest_temperature_c: float | None = None
+        self.latest_smart_health: tuple[object, ...] = ()
+        self.latest_benchmarks: tuple[object, ...] = ()
+        self.latest_diagnostics = None
+        self.feature_windows = None
+        self._worker_threads: list[threading.Thread] = []
         self.graphs_paused = False
         self.compact = False
         self.hud_borderless = False
@@ -1019,12 +1110,29 @@ class HardwareDashboard(tk.Tk):
         self._build_header()
         self._build_content()
         self._build_footer()
+        self.overlay = GamingOverlay(
+            self,
+            metrics=settings.dashboard_metrics,
+            opacity=settings.overlay_opacity,
+            theme=theme,
+            reduced_motion=settings.reduced_motion,
+            on_close=self._overlay_closed,
+        )
+        self.tray = TrayController()
+        if settings.overlay_enabled:
+            self.after(350, self.overlay.show)
+        if settings.minimize_to_tray or settings.start_in_tray:
+            self.tray.start()
+        if settings.start_in_tray:
+            self.after(250, self._hide_to_tray_when_ready)
         self.after(50, self._enable_dark_titlebar)
         self.after(100, self._poll_results)
         self.after(250, self._tick_clock)
         self._animation_job = self.after(100, self._animation_tick)
         self.bind("<Escape>", lambda _event: self.exit_hud() if self.compact else None)
-        threading.Thread(target=self._sampler, daemon=True).start()
+        self._start_worker(self._sampler, "nexus-core-sampler")
+        self._start_worker(self._process_sampler, "nexus-process-sampler")
+        self._start_worker(self._sensor_sampler, "nexus-sensor-sampler")
 
     def _configure_style(self) -> None:
         style = ttk.Style(self)
@@ -1046,8 +1154,14 @@ class HardwareDashboard(tk.Tk):
             return
         try:
             import ctypes
+            from ctypes import wintypes
             enabled = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+            set_attribute.argtypes = (
+                wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+            )
+            set_attribute.restype = ctypes.c_long
+            set_attribute(
                 self.winfo_id(), 20, ctypes.byref(enabled), ctypes.sizeof(enabled)
             )
         except Exception:
@@ -1076,6 +1190,12 @@ class HardwareDashboard(tk.Tk):
             cursor="hand2", padx=13, pady=7, font=(FONT_UI, 8, "bold")
         )
         self.compact_button.pack(side="right")
+        self.overlay_button = RoundedButton(
+            header, text="GAMING HUD", command=self.toggle_overlay, bg=CARD,
+            fg=TEXT, activebackground=BORDER, activeforeground=TEXT, relief="flat",
+            cursor="hand2", padx=13, pady=7, font=(FONT_UI, 8, "bold")
+        )
+        self.overlay_button.pack(side="right", padx=(0, 8))
         self.scanline = NeonScanline(self)
         self.scanline.pack(fill="x")
 
@@ -1091,7 +1211,7 @@ class HardwareDashboard(tk.Tk):
     def _animation_tick(self) -> None:
         if self.stop_event.is_set():
             return
-        now = time.monotonic()
+        now = time.monotonic() * self.settings.animation_speed
         try:
             visible = self.state() not in {"iconic", "withdrawn"}
         except tk.TclError:
@@ -1100,14 +1220,23 @@ class HardwareDashboard(tk.Tk):
             for widget in list(self._animated_widgets):
                 try:
                     if widget.winfo_exists() and widget.winfo_viewable():
-                        widget.animate_frame(now)
+                        if self.settings.reduced_motion and isinstance(widget, Gauge):
+                            if widget.value is not None:
+                                widget.display_value = widget.value
+                                widget.draw()
+                        else:
+                            widget.animate_frame(now)
                 except tk.TclError:
                     continue
-            self._draw_live_indicator(now)
-            if hasattr(self, "hero_status") and self.hero_status.cget("text") == "ATTENTION":
+            self._draw_live_indicator(0.0 if self.settings.reduced_motion else now)
+            if (not self.settings.reduced_motion and hasattr(self, "hero_status")
+                    and self.hero_status.cget("text") == "ATTENTION"):
                 pulse = (math.sin(now * 5.0) + 1.0) / 2.0
                 self.hero_status.configure(fg=mix_color(RED, ORANGE, pulse * 0.32))
-        self._animation_job = self.after(40, self._animation_tick)
+        self._animation_job = self.after(
+            120 if self.settings.reduced_motion else 40,
+            self._animation_tick,
+        )
 
     def _draw_live_indicator(self, now: float) -> None:
         if not self.live_orb.winfo_viewable():
@@ -1142,12 +1271,14 @@ class HardwareDashboard(tk.Tk):
         self.storage_tab = tk.Frame(self.tabs, bg=BG)
         self.hardware_tab = tk.Frame(self.tabs, bg=BG)
         self.session_tab = tk.Frame(self.tabs, bg=BG)
+        self.lab_tab = tk.Frame(self.tabs, bg=BG)
         self.tests = tk.Frame(self.tabs, bg=BG)
         tab_entries = (
             (self.overview, "OVERVIEW"), (self.performance, "PERFORMANCE"),
             (self.network_tab, "NETWORK"),
             (self.storage_tab, "STORAGE"), (self.hardware_tab, "HARDWARE"),
             (self.session_tab, "SESSION INSIGHTS"),
+            (self.lab_tab, "NEXUS LAB"),
             (self.tests, "SELF-TEST")
         )
         self.tab_buttons: dict[tk.Frame, RoundedButton] = {}
@@ -1173,6 +1304,7 @@ class HardwareDashboard(tk.Tk):
         self._build_storage()
         self._build_hardware()
         self._build_session()
+        self._build_lab()
         self._build_tests()
         self._build_compact()
         self._on_tab_changed()
@@ -1189,6 +1321,55 @@ class HardwareDashboard(tk.Tk):
             parent, surface=CARD, outline=BORDER, radius=20,
             border_width=2, padding=6
         )
+
+    def _build_lab(self) -> None:
+        callbacks = {
+            key: (lambda feature=key: self.open_lab_feature(feature))
+            for key in (
+                "processes", "alerts", "sensors", "history",
+                "diagnostics", "benchmarks", "reports", "customization",
+            )
+        }
+        self.lab_hub = FeatureHub(
+            self.lab_tab,
+            callbacks=callbacks,
+            statuses={
+                "processes": FeatureStatus("running", "Collecting live process data"),
+                "alerts": FeatureStatus(
+                    "attention" if self.alerts_paused else "ready",
+                    "Paused" if self.alerts_paused else "Threshold engine active",
+                ),
+                "sensors": FeatureStatus("running", "Checking available providers"),
+                "history": FeatureStatus(
+                    "ready" if self.settings.history_enabled else "unavailable",
+                    "Local history enabled" if self.settings.history_enabled else "Disabled in settings",
+                ),
+                "diagnostics": FeatureStatus("ready", "Runs only when requested"),
+                "benchmarks": FeatureStatus("ready", "Short, cancellable tests"),
+                "reports": FeatureStatus("ready", "Private offline export"),
+                "customization": FeatureStatus("ready", "Appearance and behaviour"),
+            },
+            theme=self.theme,
+        )
+        self.lab_hub.pack(fill="both", expand=True)
+
+    def _feature_window_manager(self) -> FeatureWindowManager:
+        manager = self.feature_windows
+        if manager is None:
+            services = FeatureServices(
+                on_status_changed=lambda key, status: self.lab_hub.set_status(key, status)
+            )
+            manager = FeatureWindowManager(self, dashboard=self, services=services)
+            self.feature_windows = manager
+        return manager
+
+    def open_lab_feature(self, feature: str) -> None:
+        self._feature_window_manager().open(feature)
+
+    def _refresh_feature_window(self, feature: str, payload: object) -> None:
+        manager = self.feature_windows
+        if manager is not None:
+            manager.refresh(feature, payload)
 
     def _build_overview(self) -> None:
         hero = self._card(self.overview)
@@ -1213,11 +1394,20 @@ class HardwareDashboard(tk.Tk):
 
         gauges = self._card(self.overview)
         gauges.pack(fill="x", pady=(0, 10))
-        self.cpu_gauge = Gauge(gauges, "CPU LOAD", CYAN)
+        self.cpu_gauge = Gauge(
+            gauges, "CPU LOAD", CYAN,
+            high_threshold=self.settings.cpu_alert_percent,
+        )
         self.cpu_gauge.pack(side="left", expand=True, pady=10)
-        self.memory_gauge = Gauge(gauges, "MEMORY USED", PURPLE)
+        self.memory_gauge = Gauge(
+            gauges, "MEMORY USED", PURPLE,
+            high_threshold=self.settings.memory_alert_percent,
+        )
         self.memory_gauge.pack(side="left", expand=True, pady=10)
-        self.disk_gauge = Gauge(gauges, "SYSTEM VOLUME", GREEN)
+        self.disk_gauge = Gauge(
+            gauges, "SYSTEM VOLUME", GREEN,
+            high_threshold=self.settings.storage_alert_percent,
+        )
         self.disk_gauge.pack(side="left", expand=True, pady=10)
 
         facts = tk.Frame(self.overview, bg=BG)
@@ -1892,6 +2082,25 @@ class HardwareDashboard(tk.Tk):
             # Another producer won the race; its value is at least as fresh.
             pass
 
+    def _start_worker(self, target, name: str) -> threading.Thread:
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        self._worker_threads.append(thread)
+        thread.start()
+        return thread
+
+    def _offer_result(self, kind: str, result: object) -> None:
+        try:
+            self.results.put_nowait((kind, result))
+        except queue.Full:
+            try:
+                self.results.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self.results.put_nowait((kind, result))
+            except queue.Full:
+                pass
+
     def _sampler(self) -> None:
         while not self.stop_event.is_set():
             started = time.monotonic()
@@ -1900,7 +2109,34 @@ class HardwareDashboard(tk.Tk):
             except Exception as exc:
                 self._replace_latest(self.snapshot_queue, ("sensor_error", exc))
             elapsed = time.monotonic() - started
-            self.stop_event.wait(max(0.05, 1.0 - elapsed))
+            self.stop_event.wait(max(0.05, self.settings.refresh_seconds - elapsed))
+
+    def _process_sampler(self) -> None:
+        while not self.stop_event.is_set():
+            started = time.monotonic()
+            try:
+                self._offer_result("processes", self.process_tracker.sample())
+            except Exception as exc:
+                self._offer_result("process_error", exc)
+            self.stop_event.wait(max(0.1, 2.0 - (time.monotonic() - started)))
+
+    def _sensor_sampler(self) -> None:
+        while not self.stop_event.is_set():
+            started = time.monotonic()
+            try:
+                self._offer_result("sensors", self.sensor_hub.sample())
+            except Exception as exc:
+                self._offer_result("sensor_provider_error", exc)
+            self.stop_event.wait(max(0.2, 4.0 - (time.monotonic() - started)))
+
+    @staticmethod
+    def _temperature_from_sensors(sensor_snapshot: object) -> float | None:
+        temperatures = [
+            float(reading.value)
+            for reading in getattr(sensor_snapshot, "readings", ())
+            if getattr(reading, "kind", None) is SensorKind.TEMPERATURE
+        ]
+        return max(temperatures, default=None)
 
     def _poll_results(self) -> None:
         try:
@@ -1927,10 +2163,64 @@ class HardwareDashboard(tk.Tk):
                 kind, result = self.results.get_nowait()
                 if kind == "tests":
                     self._render_tests(result)
+                elif kind == "processes":
+                    self.latest_processes = result
+                    count = len(getattr(result, "processes", ()))
+                    self.lab_hub.set_status(
+                        "processes", FeatureStatus("ready", f"{count} processes visible")
+                    )
+                    self._refresh_feature_window("processes", result)
+                elif kind == "process_error":
+                    self.lab_hub.set_status(
+                        "processes", FeatureStatus("error", str(result)[:90])
+                    )
+                elif kind == "sensors":
+                    self.latest_sensor_snapshot = result
+                    self.latest_temperature_c = self._temperature_from_sensors(result)
+                    count = len(getattr(result, "readings", ()))
+                    detail = (
+                        f"{count} live readings"
+                        if count
+                        else "No live sensors; SMART and provider checks remain available"
+                    )
+                    self.lab_hub.set_status("sensors", FeatureStatus("ready", detail))
+                    self._refresh_feature_window("sensors", result)
+                elif kind == "sensor_provider_error":
+                    self.lab_hub.set_status(
+                        "sensors", FeatureStatus("error", str(result)[:90])
+                    )
+                elif kind == "smart_health":
+                    self.latest_smart_health = tuple(result) if isinstance(result, (tuple, list)) else ()
+                    self._refresh_feature_window(kind, self.latest_smart_health)
+                elif kind == "diagnostics":
+                    self.latest_diagnostics = result
+                    self._refresh_feature_window(kind, result)
+                elif kind == "benchmarks":
+                    self.latest_benchmarks = tuple(result) if isinstance(result, (tuple, list)) else ()
+                    self._refresh_feature_window(kind, self.latest_benchmarks)
+                else:
+                    self._refresh_feature_window(kind, result)
         except queue.Empty:
             pass
+        self._handle_tray_commands()
         if not self.stop_event.is_set():
             self.after(100, self._poll_results)
+
+    def _handle_tray_commands(self) -> None:
+        if not hasattr(self, "tray"):
+            return
+        for command in self.tray.drain_commands():
+            if command is TrayCommand.SHOW:
+                self.deiconify()
+                self.lift()
+            elif command is TrayCommand.HIDE:
+                self.withdraw()
+            elif command is TrayCommand.TOGGLE_HUD:
+                self.toggle_overlay()
+            elif command is TrayCommand.TOGGLE_ALERTS:
+                self.set_alerts_paused(not self.alerts_paused)
+            elif command is TrayCommand.EXIT:
+                self.close(force=True)
 
     def _render_snapshot(self, snapshot) -> None:
         self.latest_snapshot = snapshot
@@ -1945,7 +2235,8 @@ class HardwareDashboard(tk.Tk):
         self._update_network(rates)
         self.updated_label.configure(
             text=(f"Updated {timestamp}  |  NET down {format_rate(rates.download_bps)}"
-                  f"  up {format_rate(rates.upload_bps)}  |  1 sec refresh")
+                  f"  up {format_rate(rates.upload_bps)}  |  "
+                  f"{self.settings.refresh_seconds:g} sec refresh")
         )
         self.cpu_gauge.set(snapshot.cpu_usage_percent)
         self.memory_gauge.set(snapshot.memory_used_percent)
@@ -1960,7 +2251,58 @@ class HardwareDashboard(tk.Tk):
         self.hud_memory_graph.add(snapshot.memory_used_percent)
         self._update_storage(snapshot)
 
-        captured = self.session.capture(snapshot, rates)
+        metrics = metrics_from_snapshot(snapshot, self.latest_temperature_c)
+        metrics["storage"] = max(
+            (drive.used_percent for drive in getattr(snapshot, "drives", ())),
+            default=metrics.get("storage"),
+        )
+        alert_events = (
+            () if self.alerts_paused
+            else self.alert_engine.evaluate(metrics, timestamp=snapshot.captured_at)
+        )
+        for event in alert_events:
+            self.alert_events.appendleft(event)
+            if event.kind == "raised":
+                self.tray.notify(event.message, "NEXUS hardware alert")
+        active_alerts = self.alert_engine.active_keys if not self.alerts_paused else ()
+        alert_labels = {
+            rule.key: f"{rule.label} >= {rule.threshold:g}{rule.unit}"
+            for rule in self.alert_engine.rules
+        }
+        active_alert_text = "; ".join(alert_labels[key] for key in active_alerts)
+        self.lab_hub.set_status(
+            "alerts",
+            FeatureStatus(
+                "attention" if active_alerts or self.alerts_paused else "ready",
+                "Paused" if self.alerts_paused else (
+                    active_alert_text or f"Monitoring {len(self.alert_engine.rules)} thresholds"
+                ),
+            ),
+        )
+        if self.settings.history_enabled:
+            self.history_store.add_snapshot(
+                snapshot,
+                temperature_c=self.latest_temperature_c,
+                network_down_bps=rates.download_bps,
+                network_up_bps=rates.upload_bps,
+            )
+        if self.history_store.error is not None:
+            self.lab_hub.set_status(
+                "history", FeatureStatus("error", str(self.history_store.error)[:90])
+            )
+        if getattr(self, "overlay", None) is not None:
+            self.overlay.update_telemetry(
+                snapshot,
+                network=rates,
+                temperature_c=self.latest_temperature_c,
+            )
+        self._refresh_feature_window("alerts", tuple(self.alert_events))
+
+        captured = self.session.capture(
+            snapshot,
+            rates,
+            alert_override=active_alert_text or None,
+        )
         if captured is not None:
             self.session_cpu_graph.add(snapshot.cpu_usage_percent)
             self.session_memory_graph.add(snapshot.memory_used_percent)
@@ -1975,23 +2317,28 @@ class HardwareDashboard(tk.Tk):
         session_summary = self.session.summary()
         self._update_session_ui(session_summary)
 
-        high_cpu = snapshot.cpu_usage_percent is not None and snapshot.cpu_usage_percent >= 85
-        high_memory = snapshot.memory_used_percent is not None and snapshot.memory_used_percent >= 85
-        critical_drives = [drive for drive in snapshot.drives if drive.used_percent >= 90]
-        elevated_drives = [drive for drive in snapshot.drives if drive.used_percent >= 75]
-        storage_alert = bool(critical_drives)
-        if high_cpu or high_memory or storage_alert:
+        cpu_threshold = self.settings.cpu_alert_percent
+        memory_threshold = self.settings.memory_alert_percent
+        storage_threshold = self.settings.storage_alert_percent
+        critical_drives = [
+            drive for drive in snapshot.drives
+            if drive.used_percent >= storage_threshold
+        ]
+        elevated_drives = [
+            drive for drive in snapshot.drives
+            if drive.used_percent >= max(50.0, storage_threshold - 15.0)
+        ]
+        if active_alerts:
             self.hero_status.configure(text="ATTENTION", fg=RED)
-            reasons = []
-            if high_cpu: reasons.append("CPU load >= 85%")
-            if high_memory: reasons.append("memory use >= 85%")
-            if storage_alert:
-                reasons.append(
-                    "drive capacity >= 90%: " + ", ".join(drive.name for drive in critical_drives)
+            detail = active_alert_text
+            if "storage" in active_alerts and critical_drives:
+                detail += "  |  " + ", ".join(
+                    f"{drive.name} {drive.used_percent:.1f}%" for drive in critical_drives
                 )
-            self.hero_detail.configure(text="  |  ".join(reasons))
-        elif ((snapshot.cpu_usage_percent or 0) >= 65 or
-              (snapshot.memory_used_percent or 0) >= 65 or elevated_drives):
+            self.hero_detail.configure(text=detail)
+        elif ((snapshot.cpu_usage_percent or 0) >= max(50.0, cpu_threshold - 20.0) or
+              (snapshot.memory_used_percent or 0) >= max(50.0, memory_threshold - 20.0) or
+              elevated_drives):
             if elevated_drives:
                 self.hero_status.configure(text="CAPACITY ELEVATED", fg=ORANGE)
                 self.hero_detail.configure(
@@ -2035,6 +2382,20 @@ class HardwareDashboard(tk.Tk):
             f"{drive.name}  {drive.free_gib:.1f} GiB free / {drive.total_gib:.1f} GiB  ({drive.used_percent:.1f}% used)"
             for drive in snapshot.drives
         ) or "No storage volume data available"
+        sensor_lines = []
+        for reading in getattr(self.latest_sensor_snapshot, "readings", ()):
+            if getattr(reading, "kind", None) in {SensorKind.TEMPERATURE, SensorKind.FAN}:
+                sensor_lines.append(
+                    f"{reading.hardware} / {reading.label}: "
+                    f"{reading.value:.1f} {reading.unit}"
+                )
+            if len(sensor_lines) >= 8:
+                break
+        sensor_inventory = (
+            "\n".join(sensor_lines)
+            if sensor_lines
+            else "Unavailable - optional sensor provider did not return temperature or fan data"
+        )
         inventory = {
             "Computer": snapshot.computer,
             "CPU": snapshot.processor,
@@ -2051,7 +2412,7 @@ class HardwareDashboard(tk.Tk):
             "Operating system": snapshot.operating_system,
             "Uptime": uptime_text(snapshot.uptime_seconds),
             "Battery / power": power,
-            "Temperatures / fans": "Unavailable - requires a trusted hardware sensor provider",
+            "Temperatures / fans": sensor_inventory,
             "Storage volumes": drives,
         }
         for name, value in inventory.items():
@@ -2229,10 +2590,149 @@ class HardwareDashboard(tk.Tk):
             pass
         return (0, 0, self.winfo_screenwidth(), self.winfo_screenheight())
 
+    def _ensure_overlay(self) -> GamingOverlay:
+        overlay = getattr(self, "overlay", None)
+        if overlay is None:
+            overlay = GamingOverlay(
+                self,
+                metrics=self.settings.dashboard_metrics,
+                opacity=self.settings.overlay_opacity,
+                theme=self.theme,
+                reduced_motion=self.settings.reduced_motion,
+                on_close=self._overlay_closed,
+            )
+            self.overlay = overlay
+            if self.latest_snapshot is not None:
+                overlay.update_telemetry(
+                    self.latest_snapshot,
+                    network=self.latest_network,
+                    temperature_c=self.latest_temperature_c,
+                )
+        return overlay
+
+    def _overlay_closed(self) -> None:
+        self.overlay = None
+
+    def toggle_overlay(self) -> None:
+        self._ensure_overlay().toggle()
+
+    def set_alerts_paused(self, paused: bool) -> None:
+        self.alerts_paused = bool(paused)
+        if self.alerts_paused:
+            self.alert_engine.resolve_all()
+        self.lab_hub.set_status(
+            "alerts",
+            FeatureStatus(
+                "attention" if self.alerts_paused else "ready",
+                "Paused" if self.alerts_paused else "Threshold engine active",
+            ),
+        )
+
+    def apply_settings(self, settings: AppSettings) -> AppSettings:
+        """Validate, persist and apply settings that can change safely at runtime."""
+        validated = AppSettings.from_mapping(settings.as_dict())
+        previous = self.settings
+        self.settings_store.save(validated)
+        self.settings = validated
+        self.alert_engine = AlertEngine(alert_rules_from_settings(validated))
+        self.alerts_paused = not validated.alerts_enabled
+        self.cpu_gauge.set_threshold(validated.cpu_alert_percent)
+        self.memory_gauge.set_threshold(validated.memory_alert_percent)
+        self.disk_gauge.set_threshold(validated.storage_alert_percent)
+
+        if (
+            previous.history_enabled != validated.history_enabled
+            or previous.history_days != validated.history_days
+        ):
+            self.history_store.close(timeout=0.5)
+            self.history_store = HistoryStore(
+                retention_days=validated.history_days,
+                autostart=validated.history_enabled,
+            )
+        self.lab_hub.set_status(
+            "history",
+            FeatureStatus(
+                "ready" if validated.history_enabled else "unavailable",
+                "Local history enabled" if validated.history_enabled else "Disabled in settings",
+            ),
+        )
+
+        self.theme = resolve_theme("graphite", validated.accent)
+        apply_theme_palette(self.theme)
+        self.lab_hub.set_theme(self.theme)
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None:
+            overlay.set_theme(self.theme)
+            overlay.set_metrics(validated.dashboard_metrics)
+            overlay.set_opacity(validated.overlay_opacity)
+            overlay.set_reduced_motion(validated.reduced_motion)
+        if validated.overlay_enabled:
+            self._ensure_overlay().show()
+        elif overlay is not None:
+            overlay.hide()
+
+        if validated.minimize_to_tray or validated.start_in_tray:
+            self.tray.start()
+        else:
+            self.tray.stop()
+        return validated
+
+    def _on_window_close(self) -> None:
+        if self.settings.minimize_to_tray:
+            status = self.tray.start()
+            if status.capability.value == "running":
+                self.withdraw()
+                self.tray.notify("NEXUS is still monitoring in the background.")
+                return
+            if status.capability.value == "ready":
+                self._hide_to_tray_when_ready(close_on_failure=True)
+                return
+            self.lab_hub.set_status(
+                "customization",
+                FeatureStatus("attention", "Tray unavailable; window kept visible"),
+            )
+            self.updated_label.configure(
+                text="Tray support is unavailable; closing NEXUS normally"
+            )
+            self.close(force=True)
+            return
+        self.close(force=True)
+
+    def _hide_to_tray_when_ready(
+        self, attempts: int = 12, close_on_failure: bool = False,
+    ) -> None:
+        """Hide only after the optional tray backend is genuinely reachable."""
+        if self.stop_event.is_set():
+            return
+        state = self.tray.status.capability.value
+        if state == "running":
+            self.withdraw()
+            self.tray.notify("NEXUS is monitoring in the background.")
+            return
+        if state == "ready" and attempts > 0:
+            self.after(
+                150,
+                lambda: self._hide_to_tray_when_ready(
+                    attempts - 1, close_on_failure=close_on_failure,
+                ),
+            )
+            return
+        if close_on_failure:
+            self.close(force=True)
+            return
+        self.deiconify()
+        self.lab_hub.set_status(
+            "customization",
+            FeatureStatus("attention", "Tray unavailable; window kept visible"),
+        )
+        self.updated_label.configure(
+            text="Tray support is unavailable; start-in-tray was skipped"
+        )
+
     def run_tests(self) -> None:
         self.test_button.configure(state="disabled", text="CHECKING...")
         self._set_test_text("Checking a known CPU calculation...\nChecking temporary-file integrity...\n")
-        threading.Thread(target=self._test_worker, daemon=True).start()
+        self._start_worker(self._test_worker, "nexus-quick-check")
 
     def _test_worker(self) -> None:
         try:
@@ -2264,8 +2764,40 @@ class HardwareDashboard(tk.Tk):
         self.test_output.insert("end", text)
         self.test_output.configure(state="disabled")
 
-    def close(self) -> None:
+    def close(self, force: bool = False) -> None:
+        if self.stop_event.is_set():
+            return
+        if not force and self.settings.minimize_to_tray:
+            self._on_window_close()
+            return
         self.stop_event.set()
+        manager = getattr(self, "feature_windows", None)
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception:
+                pass
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None:
+            try:
+                overlay.close()
+            except tk.TclError:
+                pass
+        for thread in self._worker_threads:
+            if thread is not threading.current_thread() and thread.is_alive():
+                thread.join(0.25)
+        try:
+            self.sensor_hub.close()
+        except Exception:
+            pass
+        try:
+            self.history_store.close(timeout=0.75)
+        except Exception:
+            pass
+        try:
+            self.tray.stop(join_timeout=0.5)
+        except Exception:
+            pass
         if self._animation_job is not None:
             try:
                 self.after_cancel(self._animation_job)

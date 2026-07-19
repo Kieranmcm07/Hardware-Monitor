@@ -11,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 
+_UNSET = object()
+
+
 @dataclass(frozen=True)
 class TelemetrySample:
     timestamp: float
@@ -89,7 +92,13 @@ class SessionRecorder:
         self._memory_peak: float | None = None
         self._alert_samples = 0
 
-    def capture(self, snapshot, network=None) -> TelemetrySample | None:
+    def capture(
+        self,
+        snapshot,
+        network=None,
+        *,
+        alert_override: object = _UNSET,
+    ) -> TelemetrySample | None:
         if not self.active:
             return None
         monotonic_at = float(getattr(snapshot, "monotonic_at", snapshot.captured_at))
@@ -101,17 +110,21 @@ class SessionRecorder:
             # pre-resume frame can arrive just after the button was clicked.
             return None
         self._accept_after_monotonic = None
-        alerts: list[str] = []
-        if snapshot.cpu_usage_percent is not None and snapshot.cpu_usage_percent >= 85:
-            alerts.append("CPU >= 85%")
-        if snapshot.memory_used_percent is not None and snapshot.memory_used_percent >= 85:
-            alerts.append("RAM >= 85%")
         drives = tuple(getattr(snapshot, "drives", ()))
-        critical_drives = [drive for drive in drives if drive.used_percent >= 90]
-        if critical_drives:
-            alerts.extend(f"{drive.name} storage >= 90%" for drive in critical_drives)
-        elif not drives and snapshot.disk_used_percent >= 90:
-            alerts.append(f"{snapshot.system_drive} storage >= 90%")
+        if alert_override is _UNSET:
+            alerts: list[str] = []
+            if snapshot.cpu_usage_percent is not None and snapshot.cpu_usage_percent >= 85:
+                alerts.append("CPU >= 85%")
+            if snapshot.memory_used_percent is not None and snapshot.memory_used_percent >= 85:
+                alerts.append("RAM >= 85%")
+            critical_drives = [drive for drive in drives if drive.used_percent >= 90]
+            if critical_drives:
+                alerts.extend(f"{drive.name} storage >= 90%" for drive in critical_drives)
+            elif not drives and snapshot.disk_used_percent >= 90:
+                alerts.append(f"{snapshot.system_drive} storage >= 90%")
+            alert_text = "; ".join(alerts)
+        else:
+            alert_text = "" if alert_override is None else str(alert_override).strip()
         drive_summary = "; ".join(
             f"{drive.name} {drive.used_percent:.1f}% used, {drive.free_gib:.1f} GiB free"
             for drive in drives
@@ -135,7 +148,7 @@ class SessionRecorder:
                 int(received_bytes) if received_bytes is not None else None
             ),
             network_sent_session_bytes=int(sent_bytes) if sent_bytes is not None else None,
-            alert="; ".join(alerts),
+            alert=alert_text,
         )
         self._samples.append(sample)
         self._total_samples += 1

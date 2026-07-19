@@ -1,0 +1,5 @@
+# Optional Python packages for NEXUS Hardware Monitor v4.
+# The core GUI and CLI continue to work without them.
+# smartctl, LibreHardwareMonitor, and nvidia-smi are external tools, not pip packages.
+pystray
+Pillow

@@ -2,4 +2,4 @@
 #   GitHub: https://github.com/Kieranmcm07
 
 __author__ = "Kieranmcm07"
-__version__ = "3.4.0"
+__version__ = "4.0.0"
